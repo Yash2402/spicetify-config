@@ -223,3 +223,47 @@ created by [darkthemer](https://github.com/darkthemer/)
 ```
 
 ![winctrl](screenshots/winctrl.png)
+
+## Terminal behaviour (`theme.js`)
+
+Needs `inject_theme_js = 1` in `config-xpui.ini` (then `spicetify apply`).
+
+- **Discrete scrolling**: one wheel notch (or 40px of trackpad travel) moves one line. In lists a line is one row and the view snaps to row boundaries. Smooth `scrollTo`/`scrollIntoView` calls are forced to instant.
+- **Vim normal mode**, mirroring `~/.config/nvim` (leader **right ⌘**, `scrolloff=8`, `relativenumber`, `<C-d>`/`<C-u>` + `zz`, `n`/`N` + `zz`, harpoon). Press `?` in Spotify for the list.
+
+One small set of keys works at every level: **pane → item → the controls inside it → menus/dialogs**. `<CR>` steps in, `<Esc>` steps out, `hjkl` move by screen position at whatever level you are on. The statusline shows where you are, e.g. `NORMAL │ main › No Other Heart › Mac DeMarco │ 4/8 │ Top`.
+
+| keys | action |
+| --- | --- |
+| `j` `k` `h` `l` | move: rows / cards in a pane, controls inside an item, entries in a menu (counts: `5j`) |
+| `<CR>` | step into the highlighted item; on a control press it; on a slider grab it |
+| `<Esc>` `<BS>` | step back out one level (closes submenus, menus, dialogs) |
+| `o` | play / open / press at any level without stepping in |
+| `K` | right-click menu of the highlighted thing; in menus `l`/`<CR>` open a submenu, `h` closes it |
+| `i` `a` | type into the current box (menu filter, dialog field), else the Spotify search; `<Esc>` `<C-c>` `<C-[>` leave it |
+| `H` `L`, `<C-w>h/l/w` | focus pane left / right / next (Library, Main, Sidebar, Player) |
+| `<C-w>j` `<C-w>k` | down to the player bar / back up |
+| slider grabbed | `h` `l` seek 5 s or volume 5 % (`6l` = +30 s) |
+| `gg` `G` `:N` | first / last (item or control) / Nth item |
+| `<C-d>` `<C-u>` `<C-f>` `<C-b>` `<C-y>` | half page (+zz), page, line scroll |
+| `zz` `zt` `zb` | cursor line to center / top / bottom |
+| `<C-o>` `<C-i>` | history back / forward |
+| `/` `n` `N` | search visible items |
+| `V` | visual line mode on any track or episode list (playlists, albums, Liked Songs, artist, search, podcast shows, Your Episodes): `j` `k` extend, `o` jumps to the other end, `<Esc>` leaves |
+| `V` … `J` `K` | move the selected tracks down / up (your own playlists, sorted by Custom order; `5J` moves 5) |
+| `V` … `d` / `y` | remove the selection (your playlists; unlike in Liked Songs; unsave in Your Episodes) / yank its links |
+| `u` | undo the last move, remove or `:w` |
+| `V` … `:'<,'>w name` | write the selection to a new playlist (`:w name` without a selection writes the whole list) |
+| `V` … `:'<,'>w >> name` | append the selection to one of your playlists |
+| `<leader>` | tap **right ⌘** (press + release), then the key. `<Space>` is Spotify's own play/pause again |
+| `<leader><leader>` | play / pause (double-tap right ⌘) |
+| `<leader>h` `<leader>l` | previous / next tab or filter of the focused pane (Home chips, Library filters, Marketplace tabs) |
+| `<leader>1-9` `<leader>0` | custom app N (marketplace, stats) / home |
+| `<leader>[` `<leader>]` | page back / forward |
+| `<leader>pv` | Your Library pane |
+| `<leader>y` `<leader>Y` | yank link of item / page |
+| `<leader>a`, `<C-e>`, `<C-h>` `<C-t>` `<C-n>` `<C-s>` | harpoon mark / menu / jump 1-4 |
+| `<C-k>` `<C-j>` | next / previous track |
+| `:e q` `:next` `:prev` `:play` `:vol N` `:seek 1:23` `:shuffle` `:repeat` `:like` `:home` `:set nornu` `:set so=N` | commands |
+
+Settings live in the `CFG` object at the top of `theme.js`.
