@@ -1268,3 +1268,28 @@ html {
     flex: 0 0 26ch;
     color: var(--spice-accent);
 }
+
+/* nav bar: every icon button sits in the same 48px slot, no stray margins
+   (Spotify gives Marketplace/Home extra 8px and the Spicetify update button
+   is only 22px wide, which made the gaps uneven) */
+.main-globalNav-historyButtonsContainer button,
+.main-globalNav-searchContainer button:not(form button) {
+    width: 48px !important;
+    min-width: 48px !important;
+    height: 48px !important;
+    margin-inline: 0 !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+}
+.main-globalNav-historyButtonsWrapper,
+.main-globalNav-historyButtonsWrapper > div,
+.custom-navlinks-scrollable_container,
+.spicetify-sc-contentArea,
+.main-globalNav-searchSection,
+.main-globalNav-searchContainer {
+    gap: 0 !important;
+    margin-inline: 0 !important;
+    padding-inline: 0 !important;
+}
