@@ -1146,6 +1146,14 @@ html {
     background-color: var(--spice-highlight) !important;
 }
 
+/* visual line selection (V) */
+[data-tt-visual] {
+    background-color: color-mix(in srgb, var(--spice-border-active) 28%, transparent) !important;
+}
+#tt-status[data-mode="visual"] .mode {
+    background-color: var(--spice-notification);
+}
+
 /* relativenumber gutter */
 [data-tt-rnu]::after {
     content: attr(data-tt-rnu);

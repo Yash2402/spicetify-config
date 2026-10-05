@@ -76,6 +76,7 @@
         ".main-card-card", // older card markup, reused by Spicetify apps (Marketplace...)
         'div:has(> [data-testid="shortcut-background"])',
         '[role="listitem"]',
+        '[role="treegrid"] li[role="row"]', // podcast episodes on show pages
     ].join(",");
 
     const paneEl = (name) => document.querySelector(PANES.find((p) => p.name === name).sel);
@@ -432,7 +433,10 @@
 
     function setActive(name) {
         if (!visiblePanes().includes(name)) return;
-        if (name !== active) leaveAll();
+        if (name !== active) {
+            leaveAll();
+            if (visual) stopVisual();
+        }
         active = name;
         for (const p of PANES) paneEl(p.name)?.toggleAttribute("data-tt-active", p.name === name);
         render();
@@ -537,7 +541,12 @@
             raf = 0;
             renderNumbers();
             renderSlider();
-            const label = mode === "INSERT" ? "-- INSERT --" : mode === "NORMAL" ? "NORMAL" : mode;
+            renderVisual();
+            let label = mode === "INSERT" ? "-- INSERT --" : mode === "NORMAL" ? "NORMAL" : mode;
+            if (visual && mode === "NORMAL") {
+                const [lo, hi] = visualRange();
+                label = `-- VISUAL LINE -- ${hi - lo + 1} ${visual.noun}${hi > lo ? "s" : ""}`;
+            }
             status.innerHTML = "";
             for (const [cls, text] of [
                 ["mode", label],
@@ -552,7 +561,7 @@
                 s.textContent = text;
                 status.append(s);
             }
-            status.setAttribute("data-mode", mode.toLowerCase());
+            status.setAttribute("data-mode", visual && mode === "NORMAL" ? "visual" : mode.toLowerCase());
         });
     }
 
@@ -560,11 +569,11 @@
 
     let cmdHistory = [];
     let histIdx = 0;
-    function openCmdline(prompt) {
+    function openCmdline(prompt, prefill = "") {
         clearTimeout(msgTimer);
         mode = prompt === ":" ? "COMMAND" : "SEARCH";
         cmdPrompt.textContent = prompt;
-        cmdInput.value = "";
+        cmdInput.value = prefill;
         cmdInput.readOnly = false;
         cmd.removeAttribute("data-error");
         cmd.setAttribute("data-open", "");
@@ -656,6 +665,8 @@
         "h|help": () => toggleHelp(true),
         "noh|nohlsearch": () => (lastSearch = ""),
         "harpoon": () => harpoonMenu(),
+        "w|write": (arg, ranged) => writeTracks(arg, ranged),
+        "u|undo": () => undo(),
     };
     function setOption(arg) {
         const m = arg.trim().match(/^(no)?(\w+)(?:=(\d+))?$/);
@@ -672,10 +683,14 @@
         if (!text) return;
         cmdHistory = cmdHistory.filter((h) => h !== text).concat(text);
         if (/^\d+$/.test(text)) return gotoLine(Number(text));
-        const [, name, arg = ""] = text.match(/^(\S+)\s*(.*)$/);
+        // '<,'> = the visual selection, like vim
+        const ranged = text.startsWith("'<,'>");
+        const body = ranged ? text.slice(5).trim() : text;
+        const [, name, arg = ""] = body.match(/^([a-zA-Z]+)\s*(.*)$/) || [];
         for (const [names, fn] of Object.entries(COMMANDS)) {
-            if (names.split("|").includes(name)) return fn(arg.trim());
+            if (names.split("|").includes(name)) return fn(arg.trim(), ranged);
         }
+        if (ranged && visual) stopVisual();
         message(`E492: Not an editor command: ${text}`, true);
     }
 
@@ -720,6 +735,12 @@
         ["K", "right-click menu of the highlighted thing (j k <CR> <Esc>)"],
         ["<Esc> / <BS>", "step back out one level"],
         ["/  n  N", "search visible items, next / prev (+zz)"],
+        ["V", "visual line: tracks or episodes, any list (j k extend, o other end)"],
+        ["V: J / K", "move selected tracks down / up (own playlists, 5J)"],
+        ["V: d  y", "remove (playlist, Liked Songs, Your Episodes) / yank links"],
+        ["u", "undo last move / remove / :w"],
+        [":'<,'>w name", "selection -> new playlist (no range: whole list)"],
+        [":'<,'>w >> name", "selection -> append to your playlist"],
         ["i / a", "type into the current box (menu filter, field) or search"],
         ["<Esc> / <C-c>", "leave insert mode / cancel"],
         [":", "command line (:help commands below)"],
@@ -1186,6 +1207,342 @@
     };
 
     /* ================================
+       VISUAL LINE MODE (tracklists)
+       ================================ */
+
+    // V on a track row selects rows like vim's linewise visual mode. Works on
+    // every tracklist (playlists, albums, Liked Songs, artist pages):
+    //   j/k extend, o jumps to the other end, y yanks the links,
+    //   :'<,'>w name  writes the selection to a new playlist,
+    //   :'<,'>w >> name appends it to an existing one.
+    // On playlists you can edit: J/K move the selection, d removes it, u undoes.
+    let visual = null; // { context, anchor }
+    const undoStack = [];
+    const PlaylistAPI = () => S().Platform?.PlaylistAPI;
+    const RootlistAPI = () => S().Platform?.RootlistAPI;
+
+    const isItemUri = (u) => typeof u === "string" && /^spotify:(track|episode|local)/.test(u);
+
+    // a list row's position and uri
+    function rowData(row) {
+        if (!row) return null;
+        // podcast episode rows (show pages, Your Episodes): li[role=row]
+        if (row.matches?.('li[role="row"]')) {
+            const ep = row.querySelector('[data-testid^="episode-"]');
+            const posinset = parseInt(row.getAttribute("aria-posinset"), 10);
+            const index = !isNaN(posinset) ? posinset - 1 : ep ? parseInt(ep.dataset.testid.slice(8), 10) : NaN;
+            const link = row.querySelector('a[href*="/episode/"]');
+            const id = link?.getAttribute("href").split("/episode/")[1]?.split(/[/?#]/)[0];
+            // Your Episodes rows have no episode link, but carry the uri in their aria ids
+            const uri = id ? `spotify:episode:${id}` : row.outerHTML.match(/spotify:episode:[A-Za-z0-9]{22}/)?.[0];
+            return uri && !isNaN(index) ? { index, uri, context: "" } : null;
+        }
+        // track rows: the row component's props sit a few fibers above the inner row
+        const el = row.querySelector?.(".main-trackList-trackListRow") || row;
+        const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
+        for (let f = key && el[key], d = 0; f && d < 5; f = f.return, d++) {
+            const p = f.memoizedProps;
+            if (p && typeof p.index === "number" && isItemUri(p.uri)) return { index: p.index, uri: p.uri, context: p.contextUri || "" };
+        }
+        return null;
+    }
+    const gridOf = (row) => {
+        const g = row?.closest?.('[role="grid"], [role="treegrid"]');
+        return g ? g.getAttribute("aria-label") || g.getAttribute("role") : "";
+    };
+    // what list a page shows; decides how the whole list is read and what can be edited
+    const pageContext = () => {
+        const path = History()?.location?.pathname || "";
+        const m = path.match(/^\/(playlist|album|artist|show)\/([A-Za-z0-9]+)/);
+        if (m) return `spotify:${m[1]}:${m[2]}`;
+        if (/^\/collection\/tracks/.test(path)) return "liked";
+        if (/^\/collection\/your-episodes/.test(path)) return "episodes";
+        return "";
+    };
+    async function albumUris(ctx) {
+        const G = S().GraphQL;
+        const res = await G.Request(G.Definitions.getAlbum, { uri: ctx, locale: "", offset: 0, limit: 500 });
+        return (res?.data?.albumUnion?.tracksV2?.items || []).map((i) => i.track.uri);
+    }
+
+    // a row's position in the selected list: playlist rows carry it directly,
+    // album rows also count the "Disc N" headers, so look the track up instead
+    function rowPos(row) {
+        const d = rowData(row);
+        if (!d || !visual || gridOf(row) !== visual.grid) return null;
+        if (visual.kind === "album") {
+            const i = visual.list.indexOf(d.uri);
+            return i < 0 ? null : i;
+        }
+        return d.index;
+    }
+    function cacheRows() {
+        for (const row of document.querySelectorAll('.Root__main-view [role="row"]')) {
+            const pos = rowPos(row);
+            if (pos != null) visual.cache.set(pos, rowData(row).uri);
+        }
+    }
+
+    function visualRange() {
+        const pos = rowPos(cursorEl("main"));
+        if (pos != null) visual.cur = pos; // the cursor wandered into another list: keep the last end
+        return [Math.min(visual.anchor, visual.cur), Math.max(visual.anchor, visual.cur)];
+    }
+    async function startVisual() {
+        const row = cursorEl("main");
+        const d = rowData(row);
+        if (active !== "main" || !d) return message("E: V works on track and episode rows", true);
+        leaveAll();
+        const ctx = pageContext() || "page";
+        const kind = ctx.startsWith("spotify:album:") ? "album" : ctx.startsWith("spotify:playlist:") ? "playlist" : ctx === "liked" || ctx === "episodes" ? "library" : "other";
+        visual = { context: ctx, kind, grid: gridOf(row), list: [], cache: new Map(), anchor: 0, cur: 0, noun: d.uri.includes(":episode:") ? "episode" : "track" };
+        if (kind === "album") visual.list = await albumUris(ctx);
+        visual.anchor = visual.cur = rowPos(row) ?? d.index;
+        // Spotify re-creates rows after a move/remove: repaint the selection when it does
+        visual.observer = new MutationObserver(() => render());
+        visual.observer.observe(paneEl("main"), { childList: true, subtree: true });
+        render();
+    }
+    function stopVisual() {
+        visual?.observer?.disconnect();
+        visual = null;
+        document.querySelectorAll("[data-tt-visual]").forEach((n) => n.removeAttribute("data-tt-visual"));
+        render();
+    }
+    function renderVisual() {
+        document.querySelectorAll("[data-tt-visual]").forEach((n) => n.removeAttribute("data-tt-visual"));
+        if (!visual) return;
+        cacheRows();
+        const [lo, hi] = visualRange();
+        for (const row of document.querySelectorAll('.Root__main-view [role="row"]')) {
+            const pos = rowPos(row);
+            if (pos != null && pos >= lo && pos <= hi) row.setAttribute("data-tt-visual", "");
+        }
+    }
+
+    // uris of the selection, or of the whole list on the page (:w without a range)
+    async function rangeUris(lo, hi) {
+        const ctx = visual?.context || pageContext();
+        if (ctx.startsWith("spotify:playlist:")) {
+            const { items } = await PlaylistAPI().getContents(ctx);
+            return items.slice(lo ?? 0, (hi ?? items.length - 1) + 1).map((i) => i.uri);
+        }
+        if (ctx.startsWith("spotify:album:")) {
+            const uris = visual?.list?.length ? visual.list : await albumUris(ctx);
+            return uris.slice(lo ?? 0, (hi ?? uris.length - 1) + 1);
+        }
+        // everything else (Liked Songs, artist, search, podcasts...): read the rows
+        // themselves, scrolling through the list for any that are not rendered
+        const own = !visual;
+        if (own) {
+            const row = getItems("main").find((r) => rowData(r));
+            if (!row) return [];
+            visual = { context: ctx, kind: "other", grid: gridOf(row), list: [], cache: new Map(), anchor: 0, cur: 0 };
+        }
+        try {
+            await collectRows(lo, hi);
+            const keys = [...visual.cache.keys()];
+            const from = lo ?? Math.min(...keys);
+            const to = hi ?? Math.max(...keys);
+            const out = [];
+            for (let i = from; i <= to; i++) {
+                if (!visual.cache.has(i)) throw new Error("E: couldn't read every selected row");
+                out.push(visual.cache.get(i));
+            }
+            return out;
+        } finally {
+            if (own) visual = null;
+        }
+    }
+
+    // scroll the list from the top until rows lo..hi (or all rows) have been
+    // seen, then put the view back where it was
+    async function collectRows(lo, hi) {
+        cacheRows();
+        const have = () => {
+            if (lo == null) return false;
+            for (let i = lo; i <= hi; i++) if (!visual.cache.has(i)) return false;
+            return true;
+        };
+        if (have()) return;
+        const anyRow = getItems("main").find((r) => rowPos(r) != null);
+        const sc = anyRow && scrollerOf(anyRow);
+        if (!sc) return;
+        const saved = sc.scrollTop;
+        // lazily loaded lists render placeholder rows first: wait until every
+        // row of the selected list on screen carries its data
+        const settled = async () => {
+            for (let i = 0; i < 25; i++) {
+                await new Promise((r) => setTimeout(r, 40));
+                const rows = [...sc.querySelectorAll('[role="row"]')].filter((r) => r.offsetHeight >= 8 && !r.querySelector('[role="columnheader"]') && (r.closest('[role="grid"], [role="treegrid"]') ? gridOf(r) === visual.grid : true));
+                if (rows.every((r) => rowData(r))) return;
+            }
+        };
+        sc.scrollTop = 0;
+        for (let i = 0; i < 400; i++) {
+            await settled();
+            cacheRows();
+            if (have()) break;
+            const before = sc.scrollTop;
+            sc.scrollTop += sc.clientHeight * 0.7;
+            if (sc.scrollTop === before) break; // reached the end
+        }
+        sc.scrollTop = saved;
+        await nextFrame();
+    }
+
+    // playlists only: yours (or collaborative), sorted by Custom order
+    async function editablePlaylist() {
+        const ctx = visual?.context || "";
+        if (!ctx.startsWith("spotify:playlist:")) return message(visual?.kind === "library" ? "E21: Liked Songs / Your Episodes are ordered by date added; d removes, J/K can't move" : "E21: Cannot make changes, this is not one of your playlists", true), null;
+        const meta = await PlaylistAPI().getMetadata(ctx);
+        const me = S().Platform?.username;
+        const mine = meta.isCollaborative || meta.permissions?.canAdministratePermissions || (me && meta.owner?.username === me);
+        if (!mine) return message("E21: Cannot make changes, playlist is read-only", true), null;
+        const sort = [...paneEl("main").querySelectorAll("button")].find((b) => /^(Custom order|Title|Artist|Album|Date added|Duration|Recently added)$/i.test(b.innerText.trim()));
+        if (sort && !/custom order/i.test(sort.innerText)) return message("E21: Sort the playlist by Custom order to reorder it", true), null;
+        return ctx;
+    }
+
+    // after a change, put the cursor back on list position `pos`
+    async function cursorToIndex(pos) {
+        for (let i = 0; i < 30; i++) {
+            await nextFrame();
+            const row = getItems("main").find((r) => (visual ? rowPos(r) : rowData(r)?.index) === pos && (!visual || gridOf(r) === visual.grid));
+            if (row) return setCursor("main", row, "off");
+        }
+    }
+
+    async function visualMove(n) {
+        const ctx = await editablePlaylist();
+        if (!ctx) return;
+        const [lo, hi] = visualRange();
+        const { items } = await PlaylistAPI().getContents(ctx);
+        const block = items.slice(lo, hi + 1);
+        const target = n > 0 ? Math.min(items.length - 1, hi + n) : Math.max(0, lo + n);
+        const shift = n > 0 ? target - hi : target - lo;
+        if (!shift) return;
+        const loc = n > 0 ? { after: { uid: items[target].uid } } : { before: { uid: items[target].uid } };
+        undoStack.push({ kind: "move", ctx, rows: block.map((i) => ({ uid: i.uid, uri: i.uri })), restore: items[hi + 1] ? { before: { uid: items[hi + 1].uid } } : "end" });
+        await PlaylistAPI().move(ctx, block.map((i) => ({ uid: i.uid, uri: i.uri })), loc);
+        const cur = visual.cur;
+        visual.anchor += shift;
+        visual.cur += shift;
+        await cursorToIndex(cur + shift);
+        message(`${block.length} track${block.length > 1 ? "s" : ""} moved ${Math.abs(shift)} ${shift > 0 ? "down" : "up"}`);
+    }
+
+    async function visualDelete() {
+        if (visual?.kind === "library") {
+            const [lo, hi] = visualRange();
+            const uris = await rangeUris(lo, hi);
+            undoStack.push({ kind: "unsave", uris });
+            await S().Platform.LibraryAPI.remove({ uris });
+            stopVisual();
+            await cursorToIndex(lo);
+            return message(`${uris.length} removed from ${pageContext() === "liked" ? "Liked Songs" : "Your Episodes"}`);
+        }
+        const ctx = await editablePlaylist();
+        if (!ctx) return;
+        const [lo, hi] = visualRange();
+        const { items } = await PlaylistAPI().getContents(ctx);
+        const block = items.slice(lo, hi + 1);
+        undoStack.push({ kind: "remove", ctx, uris: block.map((i) => i.uri), before: items[hi + 1]?.uid || null });
+        await PlaylistAPI().remove(ctx, block.map((i) => ({ uid: i.uid, uri: i.uri })));
+        stopVisual();
+        await cursorToIndex(Math.min(lo, items.length - block.length - 1));
+        message(`${block.length} fewer track${block.length > 1 ? "s" : ""}`);
+    }
+
+    async function undo() {
+        const u = undoStack.pop();
+        if (!u) return message("Already at oldest change");
+        if (u.kind === "move") {
+            let loc = u.restore;
+            if (loc === "end") {
+                const { items } = await PlaylistAPI().getContents(u.ctx);
+                const uids = new Set(u.rows.map((r) => r.uid));
+                const last = [...items].reverse().find((i) => !uids.has(i.uid));
+                if (!last) return;
+                loc = { after: { uid: last.uid } };
+            }
+            await PlaylistAPI().move(u.ctx, u.rows, loc);
+            if (visual) stopVisual();
+            message(`undid move of ${u.rows.length} track${u.rows.length > 1 ? "s" : ""}`);
+        } else if (u.kind === "remove") {
+            let loc = u.before ? { before: { uid: u.before } } : null;
+            if (!loc) {
+                const { items } = await PlaylistAPI().getContents(u.ctx);
+                loc = items.length ? { after: { uid: items[items.length - 1].uid } } : { before: "start" };
+            }
+            await PlaylistAPI().add(u.ctx, u.uris, loc);
+            message(`${u.uris.length} more track${u.uris.length > 1 ? "s" : ""}`);
+        } else if (u.kind === "unsave") {
+            await S().Platform.LibraryAPI.add({ uris: u.uris });
+            message(`${u.uris.length} saved again`);
+        } else if (u.kind === "create") {
+            await RootlistAPI().remove([{ uri: u.uri }]);
+            message(`removed playlist "${u.name}"`);
+        }
+    }
+
+    async function visualYank() {
+        const [lo, hi] = visualRange();
+        try {
+            const uris = await rangeUris(lo, hi);
+            copy(uris.map(toUrl).join("\n"));
+            stopVisual();
+            message(`${uris.length} link${uris.length > 1 ? "s" : ""} yanked`);
+        } catch (e) {
+            message(String(e.message || e), true);
+        }
+    }
+
+    // flat list of your playlists (folders opened up)
+    async function myPlaylists() {
+        const out = [];
+        const walk = (items) =>
+            (items || []).forEach((it) => {
+                if (it.type === "playlist") out.push(it);
+                if (it.items) walk(it.items);
+            });
+        walk((await RootlistAPI().getContents({ flatten: false })).items);
+        return out;
+    }
+
+    // :w name / :w >> name, with the visual range or the whole list
+    async function writeTracks(arg, ranged) {
+        const append = arg.startsWith(">>");
+        const name = arg.replace(/^>>\s*/, "").trim();
+        const listName = (document.querySelector(".Root__main-view .main-entityHeader-title h1, .Root__main-view h1")?.textContent || "selection").trim();
+        try {
+            const uris = ranged && visual ? await rangeUris(...visualRange()) : await rangeUris();
+            if (!uris.length) return message("E32: No tracks to write", true);
+            let uri;
+            let label;
+            if (append) {
+                if (!name) return message("E32: No playlist name", true);
+                const pl = (await myPlaylists()).find((p) => p.name.toLowerCase() === name.toLowerCase());
+                if (!pl) return message(`E212: No playlist named "${name}"`, true);
+                uri = pl.uri;
+                label = pl.name;
+                const { items } = await PlaylistAPI().getContents(uri);
+                await PlaylistAPI().add(uri, uris, items.length ? { after: { uid: items[items.length - 1].uid } } : { before: "start" });
+            } else {
+                label = name || `${listName} (selection)`;
+                uri = await RootlistAPI().createPlaylist(label, { before: "start" });
+                if (!uri) return message("E212: Can't create the playlist", true);
+                await PlaylistAPI().add(uri, uris, { before: "start" });
+                undoStack.push({ kind: "create", uri, name: label });
+            }
+            if (visual) stopVisual();
+            message(`"${label}" ${uris.length}L written${append ? " (appended)" : " [New]"}`);
+        } catch (e) {
+            message(String(e.message || e), true);
+        }
+    }
+
+    /* ================================
        KEYMAPS
        ================================ */
 
@@ -1353,6 +1710,27 @@
         "<BS>": () => act.back(),
         "<C-c>": () => act.back(),
     };
+    MAPS.V = () => startVisual();
+    // keys that mean something else while a visual selection is active
+    const VMAPS = {
+        J: (c) => visualMove(c),
+        K: (c) => visualMove(-c),
+        d: () => visualDelete(),
+        x: () => visualDelete(),
+        y: () => visualYank(),
+        o: () => {
+            visualRange();
+            [visual.anchor, visual.cur] = [visual.cur, visual.anchor];
+            cursorToIndex(visual.cur);
+        },
+        ":": () => openCmdline(":", "'<,'>"),
+        V: () => stopVisual(),
+        "<Esc>": () => stopVisual(),
+        "<C-c>": () => stopVisual(),
+        H: () => {}, // stay in the list while selecting
+        L: () => {},
+    };
+    MAPS.u = () => undo();
     const MAP_KEYS = Object.keys(MAPS);
 
     function token(e) {
@@ -1491,7 +1869,7 @@
         }
 
         const next = seq + tok;
-        const table = MAPS;
+        const table = visual ? { ...MAPS, ...VMAPS } : MAPS;
         const exact = table[next] !== undefined;
         const longer = Object.keys(table).some((k) => k.length > next.length && k.startsWith(next));
 
@@ -1612,6 +1990,7 @@
     try {
         History()?.listen?.(() => {
             if (active === "main") leaveAll();
+            if (visual) stopVisual();
             cursors.main = {};
             setTimeout(render, 300);
         });
