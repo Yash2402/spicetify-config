@@ -357,7 +357,20 @@
             if (token !== moveToken) return;
             if (dir < 0 || sc.scrollHeight === h) break;
         }
-        const items = getItems(name);
+        // long lists (Liked Songs...) load lazily: when the grid knows its row
+        // count, wait for the real last row to render before landing on it
+        let items = getItems(name);
+        const grid = items[0]?.closest('[role="grid"][aria-rowcount]');
+        const lowest = () => Math.min(...items.map((it) => +it.getAttribute("aria-rowindex") || Infinity));
+        for (let i = 0; grid && i < 120; i++) {
+            const last = items[items.length - 1];
+            if (dir > 0 && +last?.getAttribute("aria-rowindex") >= +grid.getAttribute("aria-rowcount")) break;
+            if (dir < 0 && lowest() <= 2) break; // row 1 is the column header
+            sc.scrollTop = dir > 0 ? sc.scrollHeight : 0;
+            await new Promise((r) => setTimeout(r, 50));
+            if (token !== moveToken) return;
+            items = getItems(name);
+        }
         if (items.length) setCursor(name, dir > 0 ? items[items.length - 1] : items[0], "off");
         else render();
     }
