@@ -1,0 +1,12 @@
+.DS_Store
+
+# upstream theme collection: its own git repo, clone it separately
+# git clone https://github.com/spicetify/spicetify-themes Themes/spicetify-themes
+Themes/spicetify-themes/
+
+# marketplace installer leftovers
+CustomApps/marketplace-dist.zip
+CustomApps/marketplace-tmp/
+
+# local backups
+CustomApps/*.bak*/
