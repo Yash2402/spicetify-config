@@ -227,6 +227,7 @@ created by [darkthemer](https://github.com/darkthemer/)
 ## Terminal behaviour (`theme.js`)
 
 Needs `inject_theme_js = 1` in `config-xpui.ini` (then `spicetify apply`).
+To work on it with live reload, see [Development](../../README.md#development) (`tools/spotify-debug.sh` + `node tools/dev.mjs`).
 
 - **Discrete scrolling**: one wheel notch (or 40px of trackpad travel) moves one line. In lists a line is one row and the view snaps to row boundaries. Smooth `scrollTo`/`scrollIntoView` calls are forced to instant.
 - **Vim normal mode**, mirroring `~/.config/nvim` (leader **right ⌘**, `scrolloff=8`, `relativenumber`, `<C-d>`/`<C-u>` + `zz`, `n`/`N` + `zz`, harpoon). Press `?` in Spotify for the list.
