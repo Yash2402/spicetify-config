@@ -8,6 +8,11 @@
 //     exactly one line; inside lists a line is one row and the view snaps to
 //     row boundaries
 //   * no smooth scrolling anywhere (scroll APIs are forced to "instant")
+//   * a vim normal mode modelled on ~/.config/nvim (leader = tap right ⌘,
+//     scrolloff = 8, relativenumber, <C-d>/<C-u> + zz, n/N + zz, harpoon on
+//     <leader>a / <C-e> / <C-h><C-t><C-n><C-s>, quickfix-style <C-k>/<C-j>)
+//
+// Press ? inside Spotify for the full list of bindings.
 
 (function textTerminal() {
     "use strict";
@@ -21,11 +26,20 @@
     // re-running this file (e.g. live reload while hacking on it) retires the previous copy
     const ME = (window.__textTerminalId = (window.__textTerminalId || 0) + 1);
     const alive = () => window.__textTerminalId === ME;
+    document.querySelectorAll("#tt-status, #tt-cmdline, #tt-overlay").forEach((n) => n.remove());
 
     const CFG = {
+        leader: "<leader>", // tap right ⌘ (Space is a native Spotify menu shortcut, the page never gets it first)
+        timeoutlen: 1000, // ms to wait for the rest of a mapping
+        scrolloff: 8, // rows kept visible above/below the cursor
+        relativenumber: true,
         mousescroll: 1, // lines per wheel notch
         pixelsPerLine: 40, // trackpad travel that counts as one notch
     };
+
+    const S = () => window.Spicetify || {};
+    const History = () => S().Platform?.History;
+    const Player = () => S().Player;
 
     /* ================================
        SMOOTH SCROLLING -> INSTANT
@@ -47,14 +61,68 @@
     };
 
     /* ================================
-       LINES
+       DOM HELPERS
        ================================ */
+
+    const PANES = [
+        { name: "library", sel: ".Root__nav-bar", extra: "" },
+        { name: "main", sel: ".Root__main-view", extra: "" },
+        { name: "sidebar", sel: ".Root__right-sidebar", extra: ",li" }, // friend activity / queue
+    ];
+    const ITEM_SEL = [
+        '[role="row"][aria-rowindex]',
+        '[data-encore-id="card"]',
+        'div:has(> [data-testid="shortcut-background"])',
+        '[role="listitem"]',
+    ].join(",");
+
+    const paneEl = (name) => document.querySelector(PANES.find((p) => p.name === name).sel);
+    const visiblePanes = () =>
+        PANES.filter((p) => {
+            const el = document.querySelector(p.sel);
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 40 && r.height > 40;
+        }).map((p) => p.name);
+    const paneOf = (node) => PANES.find((p) => node.closest?.(p.sel))?.name;
 
     const textLine = () => parseFloat(getComputedStyle(document.body).lineHeight) || 17;
 
     function isScrollable(n) {
         const oy = getComputedStyle(n).overflowY;
         return (oy === "auto" || oy === "scroll" || oy === "overlay") && n.scrollHeight > n.clientHeight + 1;
+    }
+    function scrollerOf(el) {
+        for (let n = el?.parentElement; n && n !== document.documentElement; n = n.parentElement) if (isScrollable(n)) return n;
+        return null;
+    }
+    // scroller of a pane: the one that holds its items, or the largest one
+    function paneScroller(name) {
+        const p = paneEl(name);
+        if (!p) return null;
+        const item = getItems(name)[0];
+        if (item) return scrollerOf(item);
+        let best = null;
+        for (const n of p.querySelectorAll("[data-overlayscrollbars-viewport], div")) {
+            if (isScrollable(n) && (!best || n.clientHeight > best.clientHeight)) best = n;
+            if (best && n.hasAttribute("data-overlayscrollbars-viewport")) break;
+        }
+        return best;
+    }
+
+    function getItems(name) {
+        const p = paneEl(name);
+        if (!p) return [];
+        const out = [];
+        const sel = ITEM_SEL + PANES.find((x) => x.name === name).extra;
+        for (const el of p.querySelectorAll(sel)) {
+            if (el.offsetHeight < 8) continue; // virtualisation spacers / hidden header rows
+            if (el.querySelector('[role="columnheader"]')) continue; // tracklist header
+            if (el.parentElement.closest(sel)) continue; // nested (card inside a row)
+            if (el.matches('[role="row"]') && el.querySelector(ITEM_SEL)) continue; // row wrapping cards
+            out.push(el);
+        }
+        return out;
     }
 
     // area hidden behind sticky headers / the floating top bar
@@ -108,6 +176,888 @@
     }
 
     /* ================================
+       CURSOR
+       ================================ */
+
+    const cursors = { library: {}, main: {}, sidebar: {} };
+    let active = "main";
+
+    function keyOf(el) {
+        const ri = el.getAttribute("aria-rowindex");
+        if (!ri) return null;
+        return { grid: el.closest('[role="grid"]')?.getAttribute("aria-label") ?? "", ri };
+    }
+    function findByKey(name, key) {
+        const p = paneEl(name);
+        if (!p || !key) return null;
+        for (const el of p.querySelectorAll(`[role="row"][aria-rowindex="${key.ri}"]`)) {
+            if ((el.closest('[role="grid"]')?.getAttribute("aria-label") ?? "") === key.grid && el.offsetHeight >= 8) return el;
+        }
+        return null;
+    }
+    function cursorEl(name = active) {
+        const c = cursors[name];
+        if (c.el?.isConnected && c.el.offsetHeight >= 8) return c.el;
+        const el = findByKey(name, c.key);
+        if (el) {
+            c.el = el;
+            el.setAttribute("data-tt-cursor", "");
+        }
+        return el;
+    }
+
+    function ensureVisible(el, mode = "off") {
+        const sc = scrollerOf(el);
+        if (!sc) return;
+        const r = el.getBoundingClientRect();
+        const v = view(sc);
+        const off = Math.min(CFG.scrolloff * r.height, Math.max(0, (v.height - r.height) / 2));
+        let d = 0;
+        if (mode === "center") d = r.top + r.height / 2 - (v.top + v.height / 2);
+        else if (mode === "top") d = r.top - (v.top + off);
+        else if (mode === "bottom") d = r.bottom - (v.bottom - off);
+        else if (r.top < v.top + off) d = r.top - (v.top + off);
+        else if (r.bottom > v.bottom - off) d = r.bottom - (v.bottom - off);
+        if (d) sc.scrollTop = Math.round(sc.scrollTop + d);
+    }
+
+    function setCursor(name, el, mode = "off", scroll = true) {
+        const c = cursors[name];
+        if (c.el && c.el !== el) c.el.removeAttribute("data-tt-cursor");
+        document.querySelectorAll("[data-tt-cursor]").forEach((n) => n !== el && paneOf(n) === name && n.removeAttribute("data-tt-cursor"));
+        c.el = el;
+        c.key = el ? keyOf(el) : null;
+        c.want = undefined;
+        if (!el) return render();
+        el.setAttribute("data-tt-cursor", "");
+        if (scroll) ensureVisible(el, mode);
+        render();
+    }
+
+    // where a fresh cursor lands: the first item outside the scrolloff zone
+    function firstVisible(items, name) {
+        const sc = paneScroller(name);
+        if (!sc) return items[0];
+        const v = view(sc);
+        const visible = items.filter((el) => el.getBoundingClientRect().top >= v.top - 1);
+        if (!visible.length) return items[0];
+        if (sc.scrollTop <= 0) return visible[0];
+        const h = visible[0].offsetHeight;
+        const off = Math.min(CFG.scrolloff * h, Math.max(0, (v.height - h) / 2));
+        return visible.find((el) => el.getBoundingClientRect().top >= v.top + off - 1) || visible[0];
+    }
+
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // group items into visual rows: a tracklist gives one item per row, a home
+    // shelf / followers grid gives several cards side by side
+    function rowsOf(items) {
+        const rows = [];
+        for (const el of items) {
+            const r = el.getBoundingClientRect();
+            const last = rows[rows.length - 1];
+            if (last && Math.abs(last.top - r.top) < Math.max(4, r.height / 4) && r.left > last.right - 2) {
+                last.items.push(el);
+                last.right = r.right;
+            } else rows.push({ top: r.top, right: r.right, items: [el] });
+        }
+        return rows.map((row) => row.items);
+    }
+    const centerX = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.left + r.width / 2;
+    };
+    // item in a row closest to the remembered column (vim's curswant)
+    const nearest = (row, x) => row.reduce((best, el) => (Math.abs(centerX(el) - x) < Math.abs(centerX(best) - x) ? el : best));
+
+    // move the cursor n rows; walks past the end of virtualised lists by
+    // scrolling and waiting for Spotify to render the next rows
+    let moveToken = 0;
+    async function move(n, mode = "off") {
+        const token = ++moveToken;
+        const name = active;
+        let remaining = n;
+        for (let guard = 0; guard < 400 && remaining; guard++) {
+            const items = getItems(name);
+            if (!items.length) {
+                scrollLines(paneScroller(name), remaining);
+                return;
+            }
+            let cur = cursorEl(name);
+            if (!items.includes(cur)) cur = firstVisible(items, name);
+            const want = cursors[name].want ?? centerX(cur);
+            const rows = rowsOf(items);
+            const ri = rows.findIndex((row) => row.includes(cur));
+            const target = ri + remaining;
+            if (target >= 0 && target < rows.length) {
+                setCursor(name, nearest(rows[target], want), mode);
+                cursors[name].want = want;
+                return;
+            }
+            const edge = target < 0 ? 0 : rows.length - 1;
+            const edgeEl = nearest(rows[edge], want);
+            if (edge === ri && guard > 0) {
+                setCursor(name, edgeEl, mode);
+                cursors[name].want = want;
+                return; // nothing new rendered
+            }
+            remaining = target - edge;
+            setCursor(name, edgeEl, "off");
+            cursors[name].want = want;
+            const sc = scrollerOf(edgeEl);
+            if (sc) sc.scrollTop += Math.sign(remaining) * sc.clientHeight * 0.5;
+            await nextFrame();
+            if (token !== moveToken) return;
+            ensureVisible(cursorEl(name) || edgeEl, "off");
+        }
+    }
+
+    // h / l: previous / next item in the same visual row (albums on home,
+    // followers, artists...); like vim, it stops at the ends of the line
+    function moveCol(n) {
+        ++moveToken;
+        const name = active;
+        const items = getItems(name);
+        if (!items.length) return;
+        let cur = cursorEl(name);
+        if (!items.includes(cur)) cur = firstVisible(items, name);
+        const row = rowsOf(items).find((r) => r.includes(cur));
+        const el = row[Math.max(0, Math.min(row.length - 1, row.indexOf(cur) + n))];
+        const shelf = scrollerOfX(el);
+        if (shelf) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        setCursor(name, el, "off");
+        cursors[name].want = centerX(el);
+    }
+    // horizontally scrolling shelf around an item, if any
+    function scrollerOfX(el) {
+        for (let n = el.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+            const ox = getComputedStyle(n).overflowX;
+            if ((ox === "auto" || ox === "scroll") && n.scrollWidth > n.clientWidth + 1) return n;
+        }
+        return null;
+    }
+
+    async function gotoEdge(dir) {
+        const token = ++moveToken;
+        const name = active;
+        const sc = paneScroller(name);
+        if (!sc) return;
+        for (let i = 0; i < 20; i++) {
+            const h = sc.scrollHeight;
+            sc.scrollTop = dir > 0 ? sc.scrollHeight : 0;
+            await nextFrame();
+            if (token !== moveToken) return;
+            if (dir < 0 || sc.scrollHeight === h) break;
+        }
+        const items = getItems(name);
+        if (items.length) setCursor(name, dir > 0 ? items[items.length - 1] : items[0], "off");
+        else render();
+    }
+
+    // keep the cursor inside the visible window (vim does this after <C-e>, wheel, ...)
+    function clampCursor(name) {
+        const el = cursorEl(name);
+        const sc = el && scrollerOf(el);
+        if (!sc) return render();
+        const v = view(sc);
+        const r = el.getBoundingClientRect();
+        const off = Math.min(CFG.scrolloff * r.height, Math.max(0, (v.height - r.height) / 2));
+        if (r.top >= v.top + off - 1 && r.bottom <= v.bottom - off + 1) return render();
+        const items = getItems(name).filter((it) => scrollerOf(it) === sc);
+        const inside = items.filter((it) => {
+            const b = it.getBoundingClientRect();
+            return b.top >= v.top + off - 1 && b.bottom <= v.bottom - off + 1;
+        });
+        const pick = r.top < v.top ? inside[0] : inside[inside.length - 1];
+        if (pick) setCursor(name, pick, "off", false);
+        else render();
+    }
+
+    function activate(el) {
+        if (!el) return;
+        const track = el.querySelector(".main-trackList-trackListRow");
+        if (track) {
+            track.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+            return;
+        }
+        // encore rows/cards put their click handler on an "<block>__on-click" overlay
+        // (class prefix like e-10860 changes between Spotify versions)
+        const target = el.querySelector(':scope > [data-testid="shortcut-background"]')
+            ? el
+            : el.querySelector('[class*="__on-click"]') || el.querySelector('a[href], [role="button"]') || el;
+        target.click();
+    }
+
+    function uriOf(el) {
+        const html = el.outerHTML;
+        const m = html.match(/spotify:(track|album|playlist|artist|show|episode|user|collection)(:[A-Za-z0-9_]+)+/);
+        if (m) return m[0];
+        const a = el.querySelector('a[href*="/track/"], a[href*="/album/"], a[href*="/playlist/"], a[href*="/artist/"], a[href*="/show/"], a[href*="/episode/"]');
+        if (a) return a.getAttribute("href");
+        return null;
+    }
+    function toUrl(uriOrPath) {
+        if (!uriOrPath) return null;
+        if (uriOrPath.startsWith("spotify:")) {
+            const parts = uriOrPath.split(":").slice(1);
+            return "https://open.spotify.com/" + parts.join("/");
+        }
+        return "https://open.spotify.com" + new URL(uriOrPath, "https://open.spotify.com").pathname;
+    }
+    function copy(text) {
+        const clip = S().Platform?.ClipboardAPI;
+        return clip?.copy ? clip.copy(text) : navigator.clipboard?.writeText(text);
+    }
+
+    function setActive(name) {
+        if (!visiblePanes().includes(name)) return;
+        active = name;
+        for (const p of PANES) paneEl(p.name)?.toggleAttribute("data-tt-active", p.name === name);
+        render();
+    }
+    function cyclePane(dir) {
+        const v = visiblePanes();
+        const i = v.indexOf(active);
+        setActive(v[(i + dir + v.length) % v.length]);
+    }
+
+    /* ================================
+       UI: STATUSLINE, CMDLINE, NUMBERS, OVERLAYS
+       ================================ */
+
+    const status = document.createElement("div");
+    status.id = "tt-status";
+    const cmd = document.createElement("div");
+    cmd.id = "tt-cmdline";
+    const cmdPrompt = document.createElement("span");
+    const cmdInput = document.createElement("input");
+    cmdInput.spellcheck = false;
+    cmdInput.autocomplete = "off";
+    cmd.append(cmdPrompt, cmdInput);
+    const overlay = document.createElement("div");
+    overlay.id = "tt-overlay";
+    document.body.append(status, cmd, overlay);
+
+    let mode = "NORMAL";
+    let showcmd = "";
+    let msgTimer;
+
+    function message(text, error = false) {
+        if (mode === "COMMAND" || mode === "SEARCH") return;
+        cmdPrompt.textContent = "";
+        cmdInput.value = text;
+        cmdInput.readOnly = true;
+        cmd.toggleAttribute("data-error", error);
+        cmd.setAttribute("data-open", "");
+        clearTimeout(msgTimer);
+        msgTimer = setTimeout(() => mode === "NORMAL" && cmd.removeAttribute("data-open"), 3000);
+    }
+
+    function position(name) {
+        const el = cursorEl(name);
+        const items = getItems(name);
+        if (!el) return "";
+        const ri = +el.getAttribute("aria-rowindex");
+        const grid = el.closest('[role="grid"]');
+        if (ri && grid?.getAttribute("aria-rowcount")) {
+            const header = grid.querySelector('[role="columnheader"]') ? 1 : 0;
+            return `${ri - header}/${+grid.getAttribute("aria-rowcount") - header}`;
+        }
+        return `${items.indexOf(el) + 1}/${items.length}`;
+    }
+    function percent(name) {
+        const sc = paneScroller(name);
+        if (!sc) return "All";
+        const max = sc.scrollHeight - sc.clientHeight;
+        if (max <= 0) return "All";
+        if (sc.scrollTop <= 0) return "Top";
+        if (sc.scrollTop >= max - 1) return "Bot";
+        return Math.round((sc.scrollTop / max) * 100) + "%";
+    }
+
+    let rnuEls = [];
+    function renderNumbers() {
+        for (const el of rnuEls) el.removeAttribute("data-tt-rnu");
+        rnuEls = [];
+        if (!CFG.relativenumber) return;
+        const cur = cursorEl(active);
+        const rows = rowsOf(getItems(active));
+        const ci = rows.findIndex((row) => row.includes(cur));
+        if (ci < 0) return;
+        const sc = scrollerOf(cur);
+        const v = sc ? view(sc) : { top: 0, bottom: innerHeight };
+        // numbers go in the gutter of list rows; shelves of cards would clip them
+        rows.forEach((row, i) => {
+            if (row.length > 1) return;
+            const el = row[0];
+            const r = el.getBoundingClientRect();
+            if (r.bottom < v.top || r.top > v.bottom) return;
+            const n = i === ci ? position(active).split("/")[0] : Math.abs(i - ci);
+            el.setAttribute("data-tt-rnu", n);
+            if (getComputedStyle(el).position === "static") el.style.position = "relative";
+            rnuEls.push(el);
+        });
+    }
+
+    let raf = 0;
+    function render() {
+        if (raf || !alive()) return;
+        raf = requestAnimationFrame(() => {
+            raf = 0;
+            renderNumbers();
+            const label = mode === "INSERT" ? "-- INSERT --" : mode === "NORMAL" ? "NORMAL" : mode;
+            status.innerHTML = "";
+            for (const [cls, text] of [
+                ["mode", label],
+                ["showcmd", showcmd],
+                ["pane", active],
+                ["pos", position(active)],
+                ["pct", percent(active)],
+            ]) {
+                if (!text) continue;
+                const s = document.createElement("span");
+                s.className = cls;
+                s.textContent = text;
+                status.append(s);
+            }
+            status.setAttribute("data-mode", mode.toLowerCase());
+        });
+    }
+
+    /* ---------- cmdline (: and /) ---------- */
+
+    let cmdHistory = [];
+    let histIdx = 0;
+    function openCmdline(prompt) {
+        clearTimeout(msgTimer);
+        mode = prompt === ":" ? "COMMAND" : "SEARCH";
+        cmdPrompt.textContent = prompt;
+        cmdInput.value = "";
+        cmdInput.readOnly = false;
+        cmd.removeAttribute("data-error");
+        cmd.setAttribute("data-open", "");
+        histIdx = cmdHistory.length;
+        cmdInput.focus();
+        render();
+    }
+    function closeCmdline() {
+        cmd.removeAttribute("data-open");
+        mode = "NORMAL";
+        cmdInput.blur();
+        render();
+    }
+    cmdInput.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        const k = e.key;
+        if (k === "Escape" || (e.ctrlKey && (k === "c" || k === "["))) {
+            e.preventDefault();
+            closeCmdline();
+        } else if (k === "Enter") {
+            e.preventDefault();
+            const text = cmdInput.value;
+            const kind = cmdPrompt.textContent;
+            closeCmdline();
+            if (kind === ":") runCommand(text);
+            else if (text) {
+                lastSearch = text;
+                searchNext(1);
+            }
+        } else if (k === "Backspace" && !cmdInput.value) {
+            e.preventDefault();
+            closeCmdline();
+        } else if (cmdPrompt.textContent === ":" && (k === "ArrowUp" || k === "ArrowDown")) {
+            e.preventDefault();
+            histIdx = Math.max(0, Math.min(cmdHistory.length, histIdx + (k === "ArrowUp" ? -1 : 1)));
+            cmdInput.value = cmdHistory[histIdx] ?? "";
+        }
+    });
+    cmdInput.addEventListener("blur", () => (mode === "COMMAND" || mode === "SEARCH") && closeCmdline());
+
+    let lastSearch = "";
+    function searchNext(dir) {
+        if (!lastSearch) return message("E35: No previous regular expression", true);
+        const items = getItems(active);
+        if (!items.length) return message(`E486: Pattern not found: ${lastSearch}`, true);
+        const needle = lastSearch.toLowerCase();
+        const start = Math.max(0, items.indexOf(cursorEl(active)));
+        for (let k = 1; k <= items.length; k++) {
+            const i = (start + dir * k + items.length * k) % items.length;
+            if (items[i].innerText.toLowerCase().includes(needle)) {
+                setCursor(active, items[i], "center"); // n/N are mapped with zz
+                if ((dir > 0 && i <= start) || (dir < 0 && i >= start)) message(dir > 0 ? "search hit BOTTOM, continuing at TOP" : "search hit TOP, continuing at BOTTOM", true);
+                else message((dir > 0 ? "/" : "?") + lastSearch);
+                return;
+            }
+        }
+        message(`E486: Pattern not found: ${lastSearch}`, true);
+    }
+
+    function parseTime(s) {
+        const parts = s.split(":").map(Number);
+        if (parts.some(isNaN)) return null;
+        return parts.reduce((acc, p) => acc * 60 + p, 0) * 1000;
+    }
+
+    const COMMANDS = {
+        "e|edit|find|s|search": (arg) => (arg ? History()?.push("/search/" + encodeURIComponent(arg)) : focusSearch()),
+        "play|pause|toggle": () => Player()?.togglePlay(),
+        "next|bn|cnext": () => Player()?.next(),
+        "prev|previous|bp|cprev": () => Player()?.back(),
+        "shuffle": () => Player()?.toggleShuffle(),
+        "repeat": () => Player()?.toggleRepeat(),
+        "like|heart": () => Player()?.toggleHeart(),
+        "vol|volume": (arg) => {
+            const v = Number(arg);
+            if (isNaN(v)) return message(`volume ${Math.round((Player()?.getVolume?.() ?? 0) * 100)}`);
+            Player()?.setVolume(Math.max(0, Math.min(100, v)) / 100);
+        },
+        "seek": (arg) => {
+            const ms = parseTime(arg);
+            if (ms == null) return message("E474: Invalid argument", true);
+            Player()?.seek(ms);
+        },
+        "home": () => History()?.push("/"),
+        "lib|library|Ex|Explore": () => setActive("library"),
+        "back": () => History()?.goBack(),
+        "forward": () => History()?.goForward(),
+        "set|se": (arg) => setOption(arg),
+        "h|help": () => toggleHelp(true),
+        "noh|nohlsearch": () => (lastSearch = ""),
+        "harpoon": () => harpoonMenu(),
+    };
+    function setOption(arg) {
+        const m = arg.trim().match(/^(no)?(\w+)(?:=(\d+))?$/);
+        if (!m) return message(`E518: Unknown option: ${arg}`, true);
+        const [, no, opt, val] = m;
+        if (opt === "rnu" || opt === "relativenumber") CFG.relativenumber = !no;
+        else if (opt === "so" || opt === "scrolloff") CFG.scrolloff = Number(val ?? 0);
+        else if (opt === "mousescroll") CFG.mousescroll = Math.max(1, Number(val ?? 1));
+        else return message(`E518: Unknown option: ${opt}`, true);
+        render();
+    }
+    function runCommand(text) {
+        text = text.trim();
+        if (!text) return;
+        cmdHistory = cmdHistory.filter((h) => h !== text).concat(text);
+        if (/^\d+$/.test(text)) return gotoLine(Number(text));
+        const [, name, arg = ""] = text.match(/^(\S+)\s*(.*)$/);
+        for (const [names, fn] of Object.entries(COMMANDS)) {
+            if (names.split("|").includes(name)) return fn(arg.trim());
+        }
+        message(`E492: Not an editor command: ${text}`, true);
+    }
+
+    async function gotoLine(n) {
+        await gotoEdge(-1);
+        if (n > 1) move(n - 1);
+    }
+
+    function focusSearch() {
+        const input = document.querySelector('.Root__globalNav input[type="search"], .Root__globalNav input, [data-testid="search-input"]');
+        if (input) {
+            input.focus();
+            input.select?.();
+        } else History()?.push("/search");
+    }
+
+    /* ---------- help ---------- */
+
+    const HELP = [
+        ["j / k", "down / up a row, keeps the column (5j)"],
+        ["gg / G / :N", "first / last / Nth item"],
+        ["<C-d> / <C-u>", "half page down / up, then zz"],
+        ["<C-f> / <C-b>", "page down / up"],
+        ["<C-y>", "scroll one line up (cursor stays)"],
+        ["zz / zt / zb", "cursor line to center / top / bottom"],
+        ["h / l", "left / right in a row of cards (count: 3l)"],
+        ["H / L, <C-w>h/l/w", "focus pane left / right / next"],
+        ["<C-o> / <C-i>", "history back / forward (jumplist)"],
+        ["<CR> / o", "play / open item under cursor"],
+        ["/  n  N", "search visible items, next / prev (+zz)"],
+        ["i / a", "insert mode in the Spotify search box"],
+        ["<Esc> / <C-c>", "leave insert mode / cancel"],
+        [":", "command line (:help commands below)"],
+        ["<leader>", "tap right ⌘ (then the key); Space = Spotify play/pause"],
+        ["<leader><leader>", "play / pause (double-tap right ⌘)"],
+        ["<leader>pv", "open Your Library pane"],
+        ["<leader>y / Y", "yank link of item / current page"],
+        ["<leader>a", "harpoon: mark current page"],
+        ["<C-e>", "harpoon: quick menu (j k <CR> dd q)"],
+        ["<C-h> <C-t> <C-n> <C-s>", "harpoon: jump to mark 1-4"],
+        ["<C-k> / <C-j>", "next / previous track (cnext/cprev)"],
+        ["wheel", "one line per notch, rows snap to grid"],
+        [":e q  :next  :prev  :play", "search, playback"],
+        [":vol N  :seek 1:23  :shuffle", "volume, seek, shuffle"],
+        [":repeat  :like  :home  :lib", "repeat, heart, navigation"],
+        [":set nornu  :set so=4", "options"],
+    ];
+    let overlayKind = null;
+    function toggleHelp(force) {
+        const open = force ?? overlayKind !== "help";
+        if (!open) return closeOverlay();
+        overlayKind = "help";
+        overlay.innerHTML = "";
+        const title = document.createElement("div");
+        title.className = "tt-title";
+        title.textContent = "text.txt — terminal keys          q to close";
+        overlay.append(title);
+        for (const [k, d] of HELP) {
+            const row = document.createElement("div");
+            row.className = "tt-row";
+            const a = document.createElement("span");
+            a.className = "tt-key";
+            a.textContent = k;
+            const b = document.createElement("span");
+            b.textContent = d;
+            row.append(a, b);
+            overlay.append(row);
+        }
+        overlay.setAttribute("data-open", "");
+    }
+    function closeOverlay() {
+        overlayKind = null;
+        overlay.removeAttribute("data-open");
+        overlay.innerHTML = "";
+    }
+
+    /* ---------- harpoon ---------- */
+
+    const HARPOON_KEY = "text-theme:harpoon";
+    const loadMarks = () => {
+        try {
+            return JSON.parse(localStorage.getItem(HARPOON_KEY)) || [];
+        } catch {
+            return [];
+        }
+    };
+    const saveMarks = (m) => {
+        try {
+            localStorage.setItem(HARPOON_KEY, JSON.stringify(m));
+        } catch {}
+    };
+    function currentPage() {
+        const path = History()?.location?.pathname || location.pathname;
+        const h = document.querySelector(".Root__main-view .main-entityHeader-title h1, .Root__main-view h1");
+        return { path, title: (h?.textContent || document.title || path).trim().slice(0, 60) };
+    }
+    function harpoonAdd() {
+        const page = currentPage();
+        const marks = loadMarks().filter((m) => m.path !== page.path);
+        marks.push(page);
+        saveMarks(marks);
+        message(`harpoon: ${marks.length} ${page.title}`);
+    }
+    function harpoonNav(i) {
+        const m = loadMarks()[i];
+        if (!m) return message(`harpoon: no mark ${i + 1}`, true);
+        History()?.push(m.path);
+    }
+    let menuIdx = 0;
+    let menuPending = "";
+    function harpoonMenu(force) {
+        if (overlayKind === "harpoon" && force !== true) return closeOverlay();
+        overlayKind = "harpoon";
+        const marks = loadMarks();
+        menuIdx = Math.min(menuIdx, Math.max(0, marks.length - 1));
+        overlay.innerHTML = "";
+        const title = document.createElement("div");
+        title.className = "tt-title";
+        title.textContent = "Harpoon          j/k <CR> dd q";
+        overlay.append(title);
+        if (!marks.length) {
+            const row = document.createElement("div");
+            row.className = "tt-row";
+            row.textContent = "(empty — <leader>a to mark a page)";
+            overlay.append(row);
+        }
+        marks.forEach((m, i) => {
+            const row = document.createElement("div");
+            row.className = "tt-row";
+            row.toggleAttribute("data-tt-cursor", i === menuIdx);
+            row.textContent = `${i + 1}  ${m.title}  ${m.path}`;
+            row.addEventListener("click", () => {
+                closeOverlay();
+                harpoonNav(i);
+            });
+            overlay.append(row);
+        });
+        overlay.setAttribute("data-open", "");
+    }
+    function harpoonMenuKey(tok) {
+        const marks = loadMarks();
+        if (menuPending === "d" && tok === "d") {
+            marks.splice(menuIdx, 1);
+            saveMarks(marks);
+            menuPending = "";
+            return harpoonMenu(true);
+        }
+        menuPending = tok === "d" ? "d" : "";
+        if (tok === "j") menuIdx = Math.min(marks.length - 1, menuIdx + 1);
+        else if (tok === "k") menuIdx = Math.max(0, menuIdx - 1);
+        else if (tok === "<CR>") {
+            closeOverlay();
+            return harpoonNav(menuIdx);
+        } else if (/^[1-9]$/.test(tok)) {
+            closeOverlay();
+            return harpoonNav(Number(tok) - 1);
+        } else if (tok === "q" || tok === "<Esc>" || tok === "<C-e>" || tok === "<C-c>") return closeOverlay();
+        if (overlayKind === "harpoon") harpoonMenu(true);
+    }
+
+    /* ================================
+       KEYMAPS
+       ================================ */
+
+    const L = CFG.leader;
+    const halfPage = (dir) => {
+        const el = cursorEl() || getItems(active)[0];
+        const sc = el ? scrollerOf(el) : paneScroller(active);
+        if (!sc) return;
+        if (!el) return (sc.scrollTop += (dir * sc.clientHeight) / 2);
+        move(dir * Math.max(1, Math.floor(view(sc).height / el.offsetHeight / 2)), "center");
+    };
+    const fullPage = (dir) => {
+        const el = cursorEl() || getItems(active)[0];
+        const sc = el ? scrollerOf(el) : paneScroller(active);
+        if (!sc) return;
+        if (!el) return (sc.scrollTop += dir * (sc.clientHeight - 2 * textLine()));
+        move(dir * Math.max(1, Math.floor(view(sc).height / el.offsetHeight) - 2), dir > 0 ? "top" : "bottom");
+    };
+    const z = (where) => () => {
+        const el = cursorEl();
+        if (el) ensureVisible(el, where);
+        render();
+    };
+    const yank = (page) => () => {
+        const url = page ? toUrl(currentPage().path) : toUrl(uriOf(cursorEl() || document.body));
+        if (!url) return message("E353: Nothing to yank", true);
+        copy(url);
+        message(`yanked ${url}`);
+    };
+
+    const MAPS = {
+        j: (c) => move(c),
+        k: (c) => move(-c),
+        h: (c) => moveCol(-c),
+        l: (c) => moveCol(c),
+        gg: (c, counted) => (counted ? gotoLine(c) : gotoEdge(-1)),
+        G: (c, counted) => (counted ? gotoLine(c) : gotoEdge(1)),
+        "<C-d>": () => halfPage(1),
+        "<C-u>": () => halfPage(-1),
+        "<C-f>": () => fullPage(1),
+        "<C-b>": () => fullPage(-1),
+        "<C-y>": (c) => {
+            scrollLines(cursorEl() ? scrollerOf(cursorEl()) : paneScroller(active), -c);
+            clampCursor(active);
+        },
+        zz: z("center"),
+        "z.": z("center"),
+        zt: z("top"),
+        "z<CR>": z("top"),
+        zb: z("bottom"),
+        "z-": z("bottom"),
+        H: () => cyclePane(-1),
+        L: () => cyclePane(1),
+        "<C-w>h": () => cyclePane(-1),
+        "<C-w>l": () => cyclePane(1),
+        "<C-w>w": () => cyclePane(1),
+        "<C-w><C-w>": () => cyclePane(1),
+        "<C-o>": () => History()?.goBack(), // jumplist older
+        "<C-i>": () => History()?.goForward(), // jumplist newer
+        "<CR>": () => activate(cursorEl()),
+        o: () => activate(cursorEl()),
+        i: () => focusSearch(),
+        a: () => focusSearch(),
+        "/": () => openCmdline("/"),
+        n: () => searchNext(1),
+        N: () => searchNext(-1),
+        ":": () => openCmdline(":"),
+        "?": () => toggleHelp(),
+        [L + L]: () => Player()?.togglePlay(), // double-tap right ⌘ (plain <Space> also works: Spotify's own)
+        [L + "pv"]: () => setActive("library"),
+        [L + "y"]: yank(false),
+        [L + "Y"]: yank(true),
+        [L + "a"]: () => harpoonAdd(),
+        "<C-e>": () => harpoonMenu(),
+        "<C-h>": () => harpoonNav(0),
+        "<C-t>": () => harpoonNav(1),
+        "<C-n>": () => harpoonNav(2),
+        "<C-s>": () => harpoonNav(3),
+        "<C-k>": () => Player()?.next(),
+        "<C-j>": () => Player()?.back(),
+        Q: () => {},
+        "<Esc>": () => closeOverlay(),
+        "<C-c>": () => closeOverlay(),
+    };
+    const MAP_KEYS = Object.keys(MAPS);
+
+    function token(e) {
+        const named = { Enter: "<CR>", Escape: "<Esc>", Tab: "<Tab>", Backspace: "<BS>" };
+        let k = named[e.key] || e.key;
+        if (e.key.length > 1 && !named[e.key]) return null; // arrows, F-keys, modifiers: leave to Spotify
+        if (e.ctrlKey) k = `<C-${k.toLowerCase()}>`;
+        return k;
+    }
+
+    function isEditable(el) {
+        if (!el || el === cmdInput) return false;
+        if (el.isContentEditable) return true;
+        if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+        return el.tagName === "INPUT" && !["range", "checkbox", "radio", "button", "submit"].includes(el.type);
+    }
+
+    let seq = "";
+    let count = "";
+    let timer;
+    function reset() {
+        seq = "";
+        count = "";
+        showcmd = "";
+        clearTimeout(timer);
+        render();
+    }
+    function run(keys, table = MAPS) {
+        const counted = count !== "";
+        const c = counted ? Math.max(1, parseInt(count, 10)) : 1;
+        reset();
+        try {
+            const r = table[keys](c, counted);
+            if (r && typeof r.catch === "function") r.catch((err) => message(String(err?.message || err), true));
+        } catch (err) {
+            console.error("[text] mapping failed", keys, err);
+        }
+    }
+
+    // <Esc>/<C-c>/<C-[> in a text field. Spotify's search dropdown ignores Escape
+    // and blur; it only closes on a mousedown outside it, so leaving insert mode
+    // does what clicking away does
+    function leaveInsert(e) {
+        const field = document.activeElement;
+        if (e.key !== "Escape") {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const init = { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true, composed: true };
+            field.dispatchEvent(new KeyboardEvent("keydown", init));
+            field.dispatchEvent(new KeyboardEvent("keyup", init));
+        }
+        setTimeout(() => {
+            if (document.activeElement === field) field.blur();
+            for (const type of ["mousedown", "mouseup"]) document.body.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+            mode = "NORMAL";
+            render();
+        });
+    }
+
+    // right ⌘ is the leader: a tap (press + release, nothing else) feeds
+    // <leader>; holding it while pressing a key works too, unless macOS or
+    // Spotify's native menu claims that ⌘-shortcut first. Left ⌘ is untouched.
+    let rightCmd = false;
+    let rightCmdUsed = false;
+
+    function onKey(e) {
+        if (!alive() || e.isComposing) return;
+        if (e.code === "MetaRight") {
+            rightCmd = true;
+            rightCmdUsed = false;
+            return;
+        }
+        if (e.target === cmdInput) return;
+        const leaderChord = rightCmd && e.metaKey && !e.altKey;
+        if (leaderChord) rightCmdUsed = true;
+        if ((e.metaKey && !leaderChord) || e.altKey) return;
+
+        if (isEditable(document.activeElement)) {
+            if (mode !== "INSERT") {
+                mode = "INSERT";
+                render();
+            }
+            if (e.key === "Escape" || (e.ctrlKey && (e.key === "c" || e.key === "["))) leaveInsert(e);
+            return;
+        }
+        if (mode === "INSERT") mode = "NORMAL";
+
+        const tok = token(e);
+        if (!tok) return;
+        if (leaderChord && !seq) feed(L, null);
+        feed(tok, e);
+    }
+
+    function onKeyUp(e) {
+        if (!alive() || e.code !== "MetaRight") return;
+        const tapped = rightCmd && !rightCmdUsed;
+        rightCmd = false;
+        if (!tapped || e.target === cmdInput || isEditable(document.activeElement)) return;
+        if (mode === "INSERT") mode = "NORMAL";
+        feed(L, null);
+    }
+
+    // run one key through the mapping machine (counts, pending sequences, overlays)
+    function feed(tok, e) {
+        const swallow = () => {
+            if (!e) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+        };
+
+        if (overlayKind === "harpoon") {
+            swallow();
+            return harpoonMenuKey(tok);
+        }
+        if (overlayKind === "help" && (tok === "q" || tok === "<Esc>" || tok === "?" || tok === "<C-c>")) {
+            swallow();
+            return closeOverlay();
+        }
+
+        if (!seq && /^[0-9]$/.test(tok) && (tok !== "0" || count)) {
+            count += tok;
+            showcmd = count;
+            swallow();
+            clearTimeout(timer);
+            timer = setTimeout(reset, CFG.timeoutlen * 3);
+            return render();
+        }
+
+        const next = seq + tok;
+        const table = MAPS;
+        const exact = table[next] !== undefined;
+        const longer = Object.keys(table).some((k) => k.length > next.length && k.startsWith(next));
+
+        if (!exact && !longer) {
+            const hadPending = seq || count;
+            reset();
+            if (hadPending) swallow();
+            return; // unmapped: let Spotify have it
+        }
+
+        swallow();
+        clearTimeout(timer);
+        if (exact && !longer) return run(next, table);
+
+        seq = next;
+        showcmd = count + seq;
+        render();
+        timer = setTimeout(() => (table[seq] ? run(seq, table) : reset()), CFG.timeoutlen);
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    // swallow the keypress/keyup that belong to a key we consumed
+    for (const type of ["keypress", "keyup"]) {
+        window.addEventListener(
+            type,
+            (e) => {
+                if (!alive() || e.metaKey || e.altKey || e.target === cmdInput || isEditable(document.activeElement)) return;
+                if ((seq || count) && token(e)) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                }
+            },
+            true
+        );
+    }
+    // ⌘ released while the window was in the background: don't leave it "held"
+    window.addEventListener("blur", () => (rightCmd = false));
+
+    /* ================================
        DISCRETE WHEEL
        ================================ */
 
@@ -147,7 +1097,52 @@
             }
             if (!lines) return;
             scrollLines(sc, lines * CFG.mousescroll);
+            const pane = paneOf(sc);
+            if (pane) clampCursor(pane);
         },
         { passive: false, capture: true }
     );
+
+    /* ================================
+       SYNC WITH THE APP
+       ================================ */
+
+    // clicking an item moves the cursor there (like :set mouse=a)
+    document.addEventListener(
+        "mousedown",
+        (e) => {
+            const pane = alive() && paneOf(e.target);
+            if (!pane) return;
+            if (pane !== active) setActive(pane);
+            const item = e.target.closest(ITEM_SEL);
+            const items = getItems(pane);
+            const hit = items.includes(item) ? item : items.find((it) => it.contains(e.target));
+            if (hit) setCursor(pane, hit, "off", false);
+        },
+        true
+    );
+    document.addEventListener("scroll", () => render(), { capture: true, passive: true });
+    document.addEventListener("focusin", () => {
+        if (isEditable(document.activeElement) && mode === "NORMAL") {
+            mode = "INSERT";
+            render();
+        }
+    });
+    document.addEventListener("focusout", () =>
+        setTimeout(() => {
+            if (mode === "INSERT" && !isEditable(document.activeElement)) {
+                mode = "NORMAL";
+                render();
+            }
+        })
+    );
+    try {
+        History()?.listen?.(() => {
+            cursors.main = {};
+            setTimeout(render, 300);
+        });
+    } catch {}
+
+    setActive("main");
+    window.__textTerminalApi = { move, setActive, cursorEl, getItems, runCommand, CFG };
 })();

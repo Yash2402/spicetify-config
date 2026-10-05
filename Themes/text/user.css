@@ -1061,3 +1061,161 @@ button[data-testid="control-button-npv-episodes"] svg {
 html {
     scroll-behavior: auto !important;
 }
+
+/* focused pane = vim's current window */
+.Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints,
+.Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container,
+.Root__main-view[data-tt-active],
+.Root__right-sidebar[data-tt-active]:has(aside:not(:empty)) {
+    border-color: var(--spice-border-active);
+}
+.Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints::before,
+.Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container::before,
+.Root__main-view[data-tt-active]::before,
+.Root__right-sidebar[data-tt-active]:has(aside:not(:empty))::before {
+    color: var(--spice-border-active);
+}
+
+/* cursorline */
+[data-tt-cursor] {
+    background-color: var(--spice-highlight) !important;
+    outline: var(--border-width) var(--border-style) var(--spice-border-active) !important;
+    outline-offset: calc(var(--border-width) * -1) !important;
+    transition: none !important; /* terminal cursors jump, they don't fade */
+    border-radius: var(--border-radius) !important;
+}
+:is(.Root__nav-bar, .Root__main-view, .Root__right-sidebar, .Root__now-playing-bar):not([data-tt-active]) [data-tt-cursor] {
+    outline-color: var(--spice-border-inactive) !important;
+}
+[data-tt-cursor] .main-trackList-trackListRow,
+.main-trackList-trackListRow:has(+ [data-tt-cursor]) {
+    background-color: transparent;
+}
+
+/* friend activity / sidebar rows get the same inner padding as track rows,
+   so the cursor outline doesn't hug the text */
+.Root__right-sidebar ul:has(> li) {
+    gap: 8px !important;
+}
+.Root__right-sidebar ul > li {
+    padding: 8px 12px;
+    transition: none !important;
+}
+.Root__right-sidebar ul > li[data-tt-cursor] {
+    outline-offset: 0 !important; /* row children would paint over an inset outline */
+}
+
+/* relativenumber gutter */
+[data-tt-rnu]::after {
+    content: attr(data-tt-rnu);
+    position: absolute;
+    top: 50%;
+    left: -3.5ch;
+    width: 3ch;
+    transform: translateY(-50%);
+    text-align: right;
+    color: var(--spice-border-inactive);
+    pointer-events: none;
+    z-index: 2;
+}
+[data-tt-cursor][data-tt-rnu]::after {
+    color: var(--spice-border-active);
+}
+
+/* statusline (top right, in the title bar strip) */
+#tt-status {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 9999;
+    display: flex;
+    gap: 1ch;
+    color: var(--spice-subtext);
+    pointer-events: none;
+    white-space: pre;
+}
+#tt-status span:not(:first-child)::before {
+    content: "│ ";
+    color: var(--spice-border-inactive);
+}
+#tt-status .mode {
+    padding: 0 1ch;
+    color: var(--spice-main);
+    background-color: var(--spice-border-active);
+}
+#tt-status[data-mode="insert"] .mode {
+    background-color: var(--spice-notification);
+}
+#tt-status[data-mode="command"] .mode,
+#tt-status[data-mode="search"] .mode {
+    background-color: var(--spice-subtext);
+}
+#tt-status .showcmd {
+    color: var(--spice-text);
+}
+
+/* command line / messages (bottom, like vim) */
+#tt-cmdline {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    display: none;
+    padding: 2px 16px;
+    background-color: var(--spice-main);
+    border-top: var(--border-width) var(--border-style) var(--spice-border-active);
+    color: var(--spice-text);
+}
+#tt-cmdline[data-open] {
+    display: flex;
+}
+#tt-cmdline[data-error] input {
+    color: var(--spice-notification-error);
+}
+#tt-cmdline input {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    caret-color: var(--spice-border-active);
+}
+
+/* help / harpoon floating window */
+#tt-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 10001;
+    display: none;
+    min-width: 60ch;
+    max-height: 80vh;
+    overflow: auto;
+    padding: 8px 0;
+    transform: translate(-50%, -50%);
+    border: var(--border-width) var(--border-style) var(--spice-border-active);
+    border-radius: var(--border-radius);
+    background-color: var(--spice-main);
+    color: var(--spice-text);
+}
+#tt-overlay[data-open] {
+    display: block;
+}
+#tt-overlay .tt-title {
+    padding: 0 2ch 4px;
+    color: var(--spice-border-active);
+    white-space: pre;
+}
+#tt-overlay .tt-row {
+    display: flex;
+    gap: 2ch;
+    padding: 0 2ch;
+    white-space: pre;
+}
+#tt-overlay .tt-key {
+    flex: 0 0 26ch;
+    color: var(--spice-accent);
+}
