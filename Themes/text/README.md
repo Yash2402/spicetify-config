@@ -237,13 +237,14 @@ One small set of keys works at every level: **pane → item → the controls ins
 | keys | action |
 | --- | --- |
 | `j` `k` `h` `l` | move: rows / cards in a pane, controls inside an item, entries in a menu (counts: `5j`) |
-| `<CR>` | step into the highlighted item; on a control press it; on a slider grab it |
+| `<CR>` | step into the highlighted item; on a control press it; on a slider grab it. Titles count as controls: in a Library row `<CR>` `l` `<CR>` opens the playlist instead of playing it |
 | `<Esc>` `<BS>` | step back out one level (closes submenus, menus, dialogs) |
 | `o` | play / open / press at any level without stepping in |
 | `K` | right-click menu of the highlighted thing; in menus `l`/`<CR>` open a submenu, `h` closes it |
 | `i` `a` | type into the current box (menu filter, dialog field), else the Spotify search; `<Esc>` `<C-c>` `<C-[>` leave it |
-| `H` `L`, `<C-w>h/l/w` | focus pane left / right / next (Library, Main, Sidebar, Player) |
-| `<C-w>j` `<C-w>k` | down to the player bar / back up |
+| `H` `L`, `<C-w>h/l/w` | focus pane left / right / next (Library, Main, Sidebar) |
+| `<C-w>k` `<C-w>j` | up to the top bar / down to the player bar (press again to go back) |
+| `<leader>f` `n` `b` `q` `u` | open friends (Listening activity), What's New, Browse, the queue, the profile menu |
 | slider grabbed | `h` `l` seek 5 s or volume 5 % (`6l` = +30 s) |
 | `gg` `G` `:N` | first / last (item or control) / Nth item |
 | `<C-d>` `<C-u>` `<C-f>` `<C-b>` `<C-y>` | half page (+zz), page, line scroll |
@@ -265,6 +266,7 @@ One small set of keys works at every level: **pane → item → the controls ins
 | `<leader>y` `<leader>Y` | yank link of item / page |
 | `<leader>a`, `<C-e>`, `<C-h>` `<C-t>` `<C-n>` `<C-s>` | harpoon mark / menu / jump 1-4 |
 | `<C-k>` `<C-j>` | next / previous track |
+| `:friends` `:news` `:browse` `:queue` `:lyrics` `:profile` | open those panels |
 | `:e q` `:next` `:prev` `:play` `:vol N` `:seek 1:23` `:shuffle` `:repeat` `:like` `:home` `:set nornu` `:set so=N` | commands |
 
 Settings live in the `CFG` object at the top of `theme.js`.

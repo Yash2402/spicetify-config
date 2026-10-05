@@ -65,6 +65,7 @@
        ================================ */
 
     const PANES = [
+        { name: "nav", sel: ".Root__globalNav", extra: "" }, // top bar: <C-w>k
         { name: "library", sel: ".Root__nav-bar", extra: "" },
         { name: "main", sel: ".Root__main-view", extra: "" },
         { name: "sidebar", sel: ".Root__right-sidebar", extra: ",li" }, // friend activity / queue
@@ -187,7 +188,7 @@
        CURSOR
        ================================ */
 
-    const cursors = { library: {}, main: {}, sidebar: {}, player: {} };
+    const cursors = { nav: {}, library: {}, main: {}, sidebar: {}, player: {} };
     let active = "main";
 
     function keyOf(el) {
@@ -441,11 +442,20 @@
         for (const p of PANES) paneEl(p.name)?.toggleAttribute("data-tt-active", p.name === name);
         render();
     }
+    // H/L move between the side-by-side panes (Library, Main, Sidebar);
+    // the top bar and the player bar sit above/below: <C-w>k / <C-w>j
+    const VERTICAL = ["nav", "player"];
     let lastPane = "main";
     function cyclePane(dir) {
-        const v = visiblePanes();
-        const i = v.indexOf(active);
-        setActive(v[(i + dir + v.length) % v.length]);
+        const v = visiblePanes().filter((n) => !VERTICAL.includes(n));
+        if (!v.length) return;
+        const i = v.indexOf(VERTICAL.includes(active) ? lastPane : active);
+        setActive(v[(Math.max(i, 0) + dir + v.length) % v.length]);
+    }
+    function verticalPane(name) {
+        if (active === name) return setActive(lastPane);
+        if (!VERTICAL.includes(active)) lastPane = active;
+        setActive(name);
     }
 
     /* ================================
@@ -665,6 +675,7 @@
         "h|help": () => toggleHelp(true),
         "noh|nohlsearch": () => (lastSearch = ""),
         "harpoon": () => harpoonMenu(),
+        "friends|news|browse|queue|lyrics|profile": (arg, ranged, name) => openUi(name),
         "w|write": (arg, ranged) => writeTracks(arg, ranged),
         "u|undo": () => undo(),
     };
@@ -688,7 +699,7 @@
         const body = ranged ? text.slice(5).trim() : text;
         const [, name, arg = ""] = body.match(/^([a-zA-Z]+)\s*(.*)$/) || [];
         for (const [names, fn] of Object.entries(COMMANDS)) {
-            if (names.split("|").includes(name)) return fn(arg.trim(), ranged);
+            if (names.split("|").includes(name)) return fn(arg.trim(), ranged, name);
         }
         if (ranged && visual) stopVisual();
         message(`E492: Not an editor command: ${text}`, true);
@@ -726,8 +737,9 @@
         ["<C-y>", "scroll one line up (cursor stays)"],
         ["zz / zt / zb", "cursor line to center / top / bottom"],
         ["h / l", "left / right (cards in a row, controls in an item)"],
-        ["H / L, <C-w>h/l/w", "focus pane left / right / next"],
-        ["<C-w>j / <C-w>k", "down to the player bar / back up"],
+        ["H / L, <C-w>h/l/w", "focus Library / Main / Sidebar"],
+        ["<C-w>k / <C-w>j", "up to the top bar / down to the player bar"],
+        ["<leader>f n b q u", "friends, What's New, Browse, queue, profile menu"],
         ["<CR> on a slider", "grab it: h / l seek 5s or volume 5% (6l), <Esc>"],
         ["<C-o> / <C-i>", "history back / forward (jumplist)"],
         ["<CR>", "go into the highlighted item; on a control: press it"],
@@ -759,6 +771,7 @@
         [":e q  :next  :prev  :play", "search, playback"],
         [":vol N  :seek 1:23  :shuffle", "volume, seek, shuffle"],
         [":repeat  :like  :home  :lib", "repeat, heart, navigation"],
+        [":friends :news :queue :lyrics", "open those panels"],
         [":set nornu  :set so=4", "options"],
     ];
     let overlayKind = null;
@@ -900,6 +913,8 @@
     ].join(",");
 
     let scopes = []; // stack of { el, sub } below the pane-level cursor
+    // title text -> the invisible click layer it labels (see controls())
+    const proxyOf = new WeakMap();
     const scope = () => scopes[scopes.length - 1];
 
     function shown(el) {
@@ -910,15 +925,31 @@
     }
     function controls(container) {
         const box = container.getBoundingClientRect();
+        const overlays = [];
         const found = [...container.querySelectorAll(CONTROL_SEL)].filter((el) => {
             if (el.disabled || el.getAttribute("aria-disabled") === "true" || el.closest('[aria-hidden="true"]')) return false;
             if (el.type === "hidden" || !shown(el)) return false;
             const layer = el.closest(LAYER_SEL);
             if (layer && layer !== container && container.contains(layer)) return false; // belongs to a nested submenu
             const r = el.getBoundingClientRect();
-            return !(r.width >= box.width * 0.9 && r.height >= box.height * 0.9); // whole-item click overlay = what o does
+            if (r.width >= box.width * 0.9 && r.height >= box.height * 0.9) {
+                overlays.push(el); // whole-item click layer = what o does
+                return false;
+            }
+            return true;
         });
-        return found.filter((el) => !found.some((o) => o !== el && el.contains(o))); // innermost wins
+        const out = found.filter((el) => !found.some((o) => o !== el && el.contains(o))); // innermost wins
+        // a row/card's click layer is invisible, but it names its title
+        // (aria-labelledby): the title stands in for it, so l + <CR> on a
+        // Library row's title opens the playlist instead of playing it
+        for (const ov of overlays) {
+            const id = ov.getAttribute("aria-labelledby")?.split(/\s+/)[0];
+            const title = id && document.getElementById(id);
+            if (!title || !container.contains(title) || !shown(title) || out.some((o) => o.contains(title))) continue;
+            proxyOf.set(title, ov);
+            out.push(title);
+        }
+        return out;
     }
 
     // nearest target in a direction: distance along the axis + 2x the drift across it
@@ -1137,6 +1168,7 @@
         if (isEditable(el)) return el.focus();
         const sc = scope();
         if (sc?.layer) sc.opened = el; // lets topLayer() follow into its submenu
+        if (proxyOf.has(el)) return proxyOf.get(el).click(); // a title: click what it labels
         if (sc?.layer && el.hasAttribute("aria-expanded")) {
             // Spotify submenus open on hover, not on click
             el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
@@ -1600,6 +1632,26 @@
         setTimeout(render, 300);
     }
 
+    // buttons outside the panes' lists: friends, What's New, queue... (the
+    // panel they open becomes the focused pane)
+    const UI = {
+        friends: { sel: '.Root__globalNav button[aria-label="Listening activity"]', pane: "sidebar" },
+        news: { sel: `.Root__globalNav button[aria-label="What's New"]`, pane: "main" },
+        browse: { sel: '.Root__globalNav button[aria-label="Browse"]', pane: "main" },
+        profile: { sel: '[data-testid="user-widget-link"]' },
+        queue: { sel: '[data-testid="control-button-queue"]', pane: "sidebar" },
+        lyrics: { sel: '[data-testid="lyrics-button"]', pane: "main" },
+    };
+    function openUi(name) {
+        const btn = document.querySelector(UI[name].sel);
+        if (!btn) return message(`E: no ${name} button here`, true);
+        btn.click();
+        setTimeout(() => {
+            if (UI[name].pane && visiblePanes().includes(UI[name].pane)) setActive(UI[name].pane);
+            else if (!visiblePanes().includes(active)) setActive("main"); // we just closed the focused panel
+        }, 400);
+    }
+
     // custom apps in the order of config-xpui.ini (custom_apps = marketplace|stats)
     function customApp(n) {
         let apps = S().Config?.custom_apps;
@@ -1668,11 +1720,8 @@
         L: () => cyclePane(1),
         "<C-w>h": () => cyclePane(-1),
         "<C-w>l": () => cyclePane(1),
-        "<C-w>j": () => {
-            if (active !== "player") lastPane = active;
-            setActive("player");
-        },
-        "<C-w>k": () => setActive(active === "player" ? lastPane : active),
+        "<C-w>j": () => (active === "nav" ? setActive(lastPane) : verticalPane("player")),
+        "<C-w>k": () => (active === "player" ? setActive(lastPane) : verticalPane("nav")),
         "<C-w>w": () => cyclePane(1),
         "<C-w><C-w>": () => cyclePane(1),
         "<C-o>": () => History()?.goBack(), // jumplist older
@@ -1693,6 +1742,11 @@
         [L + "l"]: () => chip(1),
         [L + "0"]: () => History()?.push("/"),
         ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [L + n, () => customApp(n)])),
+        [L + "f"]: () => openUi("friends"),
+        [L + "n"]: () => openUi("news"),
+        [L + "b"]: () => openUi("browse"),
+        [L + "q"]: () => openUi("queue"),
+        [L + "u"]: () => openUi("profile"),
         [L + "["]: () => History()?.goBack(),
         [L + "]"]: () => History()?.goForward(),
         [L + "y"]: yank(false),

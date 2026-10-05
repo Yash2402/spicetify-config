@@ -1063,12 +1063,14 @@ html {
 }
 
 /* focused pane = vim's current window */
+.Root__globalNav[data-tt-active],
 .Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints,
 .Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container,
 .Root__main-view[data-tt-active],
 .Root__right-sidebar[data-tt-active]:has(aside:not(:empty)) {
     border-color: var(--spice-border-active);
 }
+.Root__globalNav[data-tt-active]::before,
 .Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints::before,
 .Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container::before,
 .Root__main-view[data-tt-active]::before,
@@ -1084,7 +1086,7 @@ html {
     transition: none !important; /* terminal cursors jump, they don't fade */
     border-radius: var(--border-radius) !important;
 }
-:is(.Root__nav-bar, .Root__main-view, .Root__right-sidebar, .Root__now-playing-bar):not([data-tt-active]) [data-tt-cursor] {
+:is(.Root__globalNav, .Root__nav-bar, .Root__main-view, .Root__right-sidebar, .Root__now-playing-bar):not([data-tt-active]) [data-tt-cursor] {
     outline-color: var(--spice-border-inactive) !important;
 }
 [data-tt-cursor] .main-trackList-trackListRow,
@@ -1115,6 +1117,7 @@ html {
 /* reverse video, like a terminal selection; outlines get clipped by
    ellipsis cells, a background doesn't */
 [data-tt-sub],
+.Root__globalNav[data-tt-active] [data-tt-cursor],
 .Root__now-playing-bar[data-tt-active] [data-tt-cursor] {
     background-color: var(--spice-border-active) !important;
     color: var(--spice-main) !important;
@@ -1125,6 +1128,7 @@ html {
 }
 [data-tt-sub] *,
 [data-tt-sub] svg,
+.Root__globalNav[data-tt-active] [data-tt-cursor] *,
 .Root__now-playing-bar[data-tt-active] [data-tt-cursor] * {
     color: var(--spice-main) !important;
     fill: var(--spice-main) !important;
