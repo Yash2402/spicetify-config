@@ -746,6 +746,7 @@
         ["o", "play / open / press at any level"],
         ["K", "right-click menu of the highlighted thing (j k <CR> <Esc>)"],
         ["<Esc> / <BS>", "step back out one level"],
+        ["-", "up one level: out of an item/menu, or out of a Library folder"],
         ["/  n  N", "search visible items, next / prev (+zz)"],
         ["V", "visual line: tracks or episodes, any list (j k extend, o other end)"],
         ["V: J / K", "move selected tracks down / up (own playlists, 5J)"],
@@ -1168,7 +1169,14 @@
         if (isEditable(el)) return el.focus();
         const sc = scope();
         if (sc?.layer) sc.opened = el; // lets topLayer() follow into its submenu
-        if (proxyOf.has(el)) return proxyOf.get(el).click(); // a title: click what it labels
+        if (proxyOf.has(el)) {
+            // a title: click what it labels. That opens the thing (playlist,
+            // folder, card), so we are done with this item
+            proxyOf.get(el).click();
+            leaveAll();
+            cursors[active] = {};
+            return setTimeout(render, 300);
+        }
         if (sc?.layer && el.hasAttribute("aria-expanded")) {
             // Spotify submenus open on hover, not on click
             el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
@@ -1229,6 +1237,20 @@
             const sc = validScope();
             if (!sc) return activate(cursorEl());
             pressControl(sc.sub);
+        },
+        // -: up one level, like netrw. Same as <Esc> inside items, menus and
+        // dialogs; in the Library it also leaves a folder you opened
+        up() {
+            if (overlayKind) return closeOverlay();
+            syncLayers();
+            if (validScope()) return act.back();
+            const folderBack = active === "library" && document.querySelector('.Root__nav-bar button[aria-label="Go back"]');
+            if (folderBack && shown(folderBack)) {
+                folderBack.click();
+                cursors.library = {};
+                return setTimeout(render, 300);
+            }
+            message("already at the top");
         },
         back() {
             if (overlayKind) return closeOverlay();
@@ -1762,6 +1784,7 @@
         Q: () => {},
         "<Esc>": () => act.back(),
         "<BS>": () => act.back(),
+        "-": () => act.up(),
         "<C-c>": () => act.back(),
     };
     MAPS.V = () => startVisual();

@@ -239,6 +239,7 @@ One small set of keys works at every level: **pane → item → the controls ins
 | `j` `k` `h` `l` | move: rows / cards in a pane, controls inside an item, entries in a menu (counts: `5j`) |
 | `<CR>` | step into the highlighted item; on a control press it; on a slider grab it. Titles count as controls: in a Library row `<CR>` `l` `<CR>` opens the playlist instead of playing it |
 | `<Esc>` `<BS>` | step back out one level (closes submenus, menus, dialogs) |
+| `-` | up one level, like netrw: same as `<Esc>` inside items, menus and dialogs; in the Library it also leaves a folder you opened |
 | `o` | play / open / press at any level without stepping in |
 | `K` | right-click menu of the highlighted thing; in menus `l`/`<CR>` open a submenu, `h` closes it |
 | `i` `a` | type into the current box (menu filter, dialog field), else the Spotify search; `<Esc>` `<C-c>` `<C-[>` leave it |
