@@ -680,6 +680,9 @@
         ["<leader>", "tap right ⌘ (then the key); Space = Spotify play/pause"],
         ["<leader><leader>", "play / pause (double-tap right ⌘)"],
         ["<leader>pv", "open Your Library pane"],
+        ["<leader>h / l", "previous / next tab or filter of the pane"],
+        ["<leader>1-9 / 0", "custom app N (marketplace, stats) / home"],
+        ["<leader>[ / ]", "page back / forward"],
         ["<leader>y / Y", "yank link of item / current page"],
         ["<leader>a", "harpoon: mark current page"],
         ["<C-e>", "harpoon: quick menu (j k <CR> dd q)"],
@@ -808,6 +811,76 @@
        KEYMAPS
        ================================ */
 
+    // the tab group of the focused pane: Spotify filter chips (All / Music /
+    // Podcasts, Your Library filters, search filters), role=tab strips, or
+    // custom-app tab bars (Marketplace: Extensions / Themes / ...). Wraps like gt/gT.
+    function tabGroup(root) {
+        const visible = (els) => [...els].filter((e) => e.offsetWidth && !e.closest('[aria-hidden="true"]'));
+        let chips = visible(root.querySelectorAll('[data-encore-id="chip"]'));
+        if (chips.length) {
+            // selecting Music/Podcasts inserts sub-filters ("Following") in a differently
+            // classed wrapper; only cycle the top-level ones, which share the first one's
+            const base = chips[0].parentElement.className;
+            return chips.filter((c) => c.parentElement.className === base);
+        }
+        const tabs = visible(root.querySelectorAll('[role="tab"]'));
+        if (tabs.length) return tabs;
+        const bar = root.querySelector('[role="tablist"], [class*="tabBar" i], [class*="tab-bar" i], [class*="tabs" i]');
+        return bar ? visible(bar.querySelectorAll("a, button")) : [];
+    }
+    const isOn = (c) =>
+        ["aria-checked", "aria-pressed", "aria-selected"].some((a) => c.getAttribute(a) === "true") ||
+        /(^|[-_\s])(active|selected)\b/i.test(c.className + " " + (c.parentElement?.className || ""));
+    // filter bars with no "All" chip (Your Library) hide the other filters and
+    // show sub-filters once one is picked; remember the top level while nothing
+    // is selected and cycle "none -> Playlists -> Podcasts -> ... -> none"
+    const topFilters = {};
+    async function chip(dir) {
+        const root = tabGroup(paneEl(active)).length ? paneEl(active) : paneEl("main");
+        const pane = paneOf(root) || "main";
+        let group = tabGroup(root);
+        if (!group.length) return message("no tabs or filters here", true);
+        const text = (c) => c.innerText.trim();
+        if (!group.some(isOn) && group[0].dataset.encoreId === "chip") topFilters[pane] = group.map(text);
+        const tops = topFilters[pane];
+        if (!tops) {
+            const i = group.findIndex(isOn);
+            group[(i < 0 ? (dir > 0 ? 0 : group.length - 1) : i + dir + group.length) % group.length].click();
+        } else {
+            const slots = [null, ...tops];
+            const on = group.find((c) => isOn(c) && tops.includes(text(c)));
+            const target = slots[(slots.indexOf(on ? text(on) : null) + dir + slots.length) % slots.length];
+            if (on) on.click(); // deselect: the other top-level filters come back
+            for (let i = 0; target && i < 20; i++) {
+                const el = tabGroup(root).find((c) => text(c) === target);
+                if (el) {
+                    el.click();
+                    break;
+                }
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            message(`filter: ${target ?? "none"}`);
+        }
+        cursors[pane] = {};
+        setTimeout(render, 300);
+    }
+
+    // custom apps in the order of config-xpui.ini (custom_apps = marketplace|stats)
+    function customApp(n) {
+        let apps = S().Config?.custom_apps;
+        if (typeof apps === "string") apps = apps.split("|");
+        apps = (apps || []).filter(Boolean);
+        if (apps[n - 1]) return History()?.push("/" + apps[n - 1]);
+        // fallback: the app buttons between "Go forward" and "Home" in the nav bar
+        const btns = [...document.querySelectorAll(".Root__globalNav button")].filter((b) => b.offsetWidth);
+        const labels = btns.map((b) => b.getAttribute("aria-label") || "");
+        const from = labels.indexOf("Go forward") + 1;
+        const to = labels.indexOf("Home");
+        const navApps = btns.slice(from, to < 0 ? btns.length : to).filter((b) => !/update/i.test(b.getAttribute("aria-label") || ""));
+        if (navApps[n - 1]) return navApps[n - 1].click();
+        message(`no app ${n}`, true);
+    }
+
     const L = CFG.leader;
     const halfPage = (dir) => {
         const el = cursorEl() || getItems(active)[0];
@@ -875,6 +948,12 @@
         "?": () => toggleHelp(),
         [L + L]: () => Player()?.togglePlay(), // double-tap right ⌘ (plain <Space> also works: Spotify's own)
         [L + "pv"]: () => setActive("library"),
+        [L + "h"]: () => chip(-1),
+        [L + "l"]: () => chip(1),
+        [L + "0"]: () => History()?.push("/"),
+        ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [L + n, () => customApp(n)])),
+        [L + "["]: () => History()?.goBack(),
+        [L + "]"]: () => History()?.goForward(),
         [L + "y"]: yank(false),
         [L + "Y"]: yank(true),
         [L + "a"]: () => harpoonAdd(),
