@@ -1049,3 +1049,15 @@ button[data-testid="control-button-npv-episodes"] svg {
 .main-connectBar-connectBar svg {
     fill: var(--spice-accent-active);
 }
+
+/*  ================================
+    TERMINAL BEHAVIOUR (theme.js)
+    ================================ */
+
+/* no smooth / inertial scrolling anywhere */
+*,
+*::before,
+*::after,
+html {
+    scroll-behavior: auto !important;
+}
