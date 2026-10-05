@@ -1105,6 +1105,47 @@ html {
     outline-offset: 0 !important; /* row children would paint over an inset outline */
 }
 
+/* inside an item (<CR>): the item keeps a dashed frame, the control under
+   the sub-cursor gets the solid one and is forced visible even if Spotify
+   only shows it on hover */
+[data-tt-cursor][data-tt-scope],
+[data-tt-scope] {
+    outline-style: dashed !important;
+}
+/* reverse video, like a terminal selection; outlines get clipped by
+   ellipsis cells, a background doesn't */
+[data-tt-sub],
+.Root__now-playing-bar[data-tt-active] [data-tt-cursor] {
+    background-color: var(--spice-border-active) !important;
+    color: var(--spice-main) !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    border-radius: var(--border-radius) !important;
+    text-decoration: none !important;
+}
+[data-tt-sub] *,
+[data-tt-sub] svg,
+.Root__now-playing-bar[data-tt-active] [data-tt-cursor] * {
+    color: var(--spice-main) !important;
+    fill: var(--spice-main) !important;
+    opacity: 1 !important;
+}
+
+/* a focused player pane counts as hovered: show the faded control groups */
+.Root__now-playing-bar[data-tt-active] :is(.player-controls__buttons, .main-nowPlayingBar-extraControls) {
+    opacity: 1;
+}
+/* range inputs are invisible (the theme draws the bar), so theme.js frames
+   the slider's own container instead; dashed while grabbed (<CR>) */
+[data-tt-slider] {
+    outline: var(--border-width) solid var(--spice-border-active) !important;
+    outline-offset: 3px;
+}
+[data-tt-slider="grab"] {
+    outline-style: dashed !important;
+    background-color: var(--spice-highlight) !important;
+}
+
 /* relativenumber gutter */
 [data-tt-rnu]::after {
     content: attr(data-tt-rnu);

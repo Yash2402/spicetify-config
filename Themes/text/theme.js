@@ -68,10 +68,12 @@
         { name: "library", sel: ".Root__nav-bar", extra: "" },
         { name: "main", sel: ".Root__main-view", extra: "" },
         { name: "sidebar", sel: ".Root__right-sidebar", extra: ",li" }, // friend activity / queue
+        { name: "player", sel: ".Root__now-playing-bar", extra: "" }, // controls + sliders, moved spatially
     ];
     const ITEM_SEL = [
         '[role="row"][aria-rowindex]',
         '[data-encore-id="card"]',
+        ".main-card-card", // older card markup, reused by Spicetify apps (Marketplace...)
         'div:has(> [data-testid="shortcut-background"])',
         '[role="listitem"]',
     ].join(",");
@@ -122,7 +124,12 @@
             if (el.matches('[role="row"]') && el.querySelector(ITEM_SEL)) continue; // row wrapping cards
             out.push(el);
         }
-        return out;
+        if (out.length) return out;
+        // panes with none of the above (player bar, settings, other custom apps):
+        // every control becomes an item and hjkl move spatially between them
+        const generic = controls(p).filter((el) => !el.closest(".main-topBar-container"));
+        generic.generic = true;
+        return generic;
     }
 
     // area hidden behind sticky headers / the floating top bar
@@ -179,7 +186,7 @@
        CURSOR
        ================================ */
 
-    const cursors = { library: {}, main: {}, sidebar: {} };
+    const cursors = { library: {}, main: {}, sidebar: {}, player: {} };
     let active = "main";
 
     function keyOf(el) {
@@ -222,6 +229,7 @@
     }
 
     function setCursor(name, el, mode = "off", scroll = true) {
+        if (name === active && scopes.length && scopes[0].el !== el) leaveAll();
         const c = cursors[name];
         if (c.el && c.el !== el) c.el.removeAttribute("data-tt-cursor");
         document.querySelectorAll("[data-tt-cursor]").forEach((n) => n !== el && paneOf(n) === name && n.removeAttribute("data-tt-cursor"));
@@ -411,10 +419,12 @@
 
     function setActive(name) {
         if (!visiblePanes().includes(name)) return;
+        if (name !== active) leaveAll();
         active = name;
         for (const p of PANES) paneEl(p.name)?.toggleAttribute("data-tt-active", p.name === name);
         render();
     }
+    let lastPane = "main";
     function cyclePane(dir) {
         const v = visiblePanes();
         const i = v.indexOf(active);
@@ -499,18 +509,27 @@
         });
     }
 
+    function renderSlider() {
+        document.querySelectorAll("[data-tt-slider]").forEach((n) => n.removeAttribute("data-tt-slider"));
+        const sc = scope();
+        const el = sc ? sc.sub : cursorEl(active);
+        if (!el || !isSlider(el)) return;
+        (el.closest("[data-testid]") || el.parentElement).setAttribute("data-tt-slider", sc?.adjust ? "grab" : "");
+    }
+
     let raf = 0;
     function render() {
         if (raf || !alive()) return;
         raf = requestAnimationFrame(() => {
             raf = 0;
             renderNumbers();
+            renderSlider();
             const label = mode === "INSERT" ? "-- INSERT --" : mode === "NORMAL" ? "NORMAL" : mode;
             status.innerHTML = "";
             for (const [cls, text] of [
                 ["mode", label],
                 ["showcmd", showcmd],
-                ["pane", active],
+                ["pane", [active, ...scopes.map((sc, i) => (sc.layer ? (sc.el.matches('[role="menu"]') ? "menu" : "dialog") : sc.adjust ? "adjust" : labelOf(i === 0 ? sc.el : scopes[i - 1].sub))), labelOf(scope()?.sub)].filter(Boolean).join(" › ")],
                 ["pos", position(active)],
                 ["pct", percent(active)],
             ]) {
@@ -652,6 +671,15 @@
         if (n > 1) move(n - 1);
     }
 
+    // i: type into the current scope's text box (menu filter, dialog field,
+    // Library search...), else the global search
+    function insert() {
+        const sc = validScope();
+        const box = sc && (isEditable(sc.sub) ? sc.sub : controls(sc.el).find(isEditable));
+        if (box) return box.focus();
+        focusSearch();
+    }
+
     function focusSearch() {
         const input = document.querySelector('.Root__globalNav input[type="search"], .Root__globalNav input, [data-testid="search-input"]');
         if (input) {
@@ -669,12 +697,17 @@
         ["<C-f> / <C-b>", "page down / up"],
         ["<C-y>", "scroll one line up (cursor stays)"],
         ["zz / zt / zb", "cursor line to center / top / bottom"],
-        ["h / l", "left / right in a row of cards (count: 3l)"],
+        ["h / l", "left / right (cards in a row, controls in an item)"],
         ["H / L, <C-w>h/l/w", "focus pane left / right / next"],
+        ["<C-w>j / <C-w>k", "down to the player bar / back up"],
+        ["<CR> on a slider", "grab it: h / l seek 5s or volume 5% (6l), <Esc>"],
         ["<C-o> / <C-i>", "history back / forward (jumplist)"],
-        ["<CR> / o", "play / open item under cursor"],
+        ["<CR>", "go into the highlighted item; on a control: press it"],
+        ["o", "play / open / press at any level"],
+        ["K", "right-click menu of the highlighted thing (j k <CR> <Esc>)"],
+        ["<Esc> / <BS>", "step back out one level"],
         ["/  n  N", "search visible items, next / prev (+zz)"],
-        ["i / a", "insert mode in the Spotify search box"],
+        ["i / a", "type into the current box (menu filter, field) or search"],
         ["<Esc> / <C-c>", "leave insert mode / cancel"],
         [":", "command line (:help commands below)"],
         ["<leader>", "tap right ⌘ (then the key); Space = Spotify play/pause"],
@@ -808,6 +841,338 @@
     }
 
     /* ================================
+       SCOPES: pane > item > controls
+       ================================ */
+
+    // <CR> steps into the highlighted thing, <Esc> steps back out, and the same
+    // hjkl move around whatever level you are on. Inside an item the targets
+    // are its controls (buttons, links, inputs...), found generically so it
+    // works for Spotify pages, Marketplace, Stats and dialogs alike.
+    const CONTROL_SEL = [
+        "a[href]",
+        "button",
+        "input",
+        "select",
+        "textarea",
+        '[role="button"]',
+        '[role="link"]',
+        '[role="checkbox"]',
+        '[role="switch"]',
+        '[role="tab"]',
+        '[role="slider"]',
+        '[role="menuitem"]',
+        '[role="option"]',
+        '[tabindex="0"]',
+    ].join(",");
+
+    let scopes = []; // stack of { el, sub } below the pane-level cursor
+    const scope = () => scopes[scopes.length - 1];
+
+    function shown(el) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return false;
+        const cs = getComputedStyle(el);
+        return cs.visibility !== "hidden" && cs.display !== "none";
+    }
+    function controls(container) {
+        const box = container.getBoundingClientRect();
+        const found = [...container.querySelectorAll(CONTROL_SEL)].filter((el) => {
+            if (el.disabled || el.getAttribute("aria-disabled") === "true" || el.closest('[aria-hidden="true"]')) return false;
+            if (el.type === "hidden" || !shown(el)) return false;
+            const layer = el.closest(LAYER_SEL);
+            if (layer && layer !== container && container.contains(layer)) return false; // belongs to a nested submenu
+            const r = el.getBoundingClientRect();
+            return !(r.width >= box.width * 0.9 && r.height >= box.height * 0.9); // whole-item click overlay = what o does
+        });
+        return found.filter((el) => !found.some((o) => o !== el && el.contains(o))); // innermost wins
+    }
+
+    // nearest target in a direction: distance along the axis + 2x the drift across it
+    function spatial(from, targets, dir) {
+        const a = from.getBoundingClientRect();
+        const ax = a.left + a.width / 2;
+        const ay = a.top + a.height / 2;
+        let best = null;
+        let bestScore = Infinity;
+        for (const el of targets) {
+            if (el === from) continue;
+            const b = el.getBoundingClientRect();
+            const dx = b.left + b.width / 2 - ax;
+            const dy = b.top + b.height / 2 - ay;
+            const along = { h: -dx, l: dx, k: -dy, j: dy }[dir];
+            const across = dir === "h" || dir === "l" ? Math.abs(dy) : Math.abs(dx);
+            if (along <= 2) continue;
+            const score = along + across * 2;
+            if (score < bestScore) {
+                bestScore = score;
+                best = el;
+            }
+        }
+        return best;
+    }
+
+    const labelOf = (el) =>
+        (el && isSlider(el) ? `${sliderName(el)} ${sliderValue(el)}` : null) ||
+        (el?.getAttribute("aria-label") || el?.getAttribute("title") || el?.innerText || el?.value || "")
+            .trim()
+            .split("\n")[0]
+            .slice(0, 28);
+
+    function setSub(el) {
+        const sc = scope();
+        if (!sc) return;
+        sc.sub?.removeAttribute("data-tt-sub");
+        sc.sub = el;
+        if (el) {
+            el.setAttribute("data-tt-sub", "");
+            // focus reveals hover-only controls (Spotify shows them on :focus-within);
+            // not inside menus, where focus also pops submenus open
+            if (!isEditable(el) && !el.closest(LAYER_SEL)) el.focus?.({ preventScroll: true });
+            el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+        render();
+    }
+    function enter(el) {
+        if (!el) return false;
+        const cs = controls(el);
+        if (!cs.length) return false;
+        el.setAttribute("data-tt-scope", "");
+        scopes.push({ el, sub: null });
+        setSub(firstControl(cs));
+        return true;
+    }
+    // reading order: leftmost control on the top visual line
+    function firstControl(cs) {
+        const rect = (c) => c.getBoundingClientRect();
+        const top = cs.reduce((a, c) => (rect(c).top < rect(a).top ? c : a));
+        const line = cs.filter((c) => rect(c).top < rect(top).bottom - 2);
+        return line.reduce((a, c) => (rect(c).left < rect(a).left ? c : a));
+    }
+    // ...and the rightmost control on the bottom visual line
+    function lastControl(cs) {
+        const rect = (c) => c.getBoundingClientRect();
+        const bottom = cs.reduce((a, c) => (rect(c).bottom > rect(a).bottom ? c : a));
+        const line = cs.filter((c) => rect(c).bottom > rect(bottom).top + 2);
+        return line.reduce((a, c) => (rect(c).right > rect(a).right ? c : a));
+    }
+    function leave() {
+        const sc = scopes.pop();
+        if (!sc) return false;
+        sc.sub?.removeAttribute("data-tt-sub");
+        sc.el.removeAttribute("data-tt-scope");
+        if (document.activeElement && sc.el.contains(document.activeElement)) document.activeElement.blur();
+        render();
+        return true;
+    }
+    function leaveAll() {
+        while (scopes.length) leave();
+    }
+    // drop scopes whose elements Spotify re-rendered away
+    function validScope() {
+        syncLayers();
+        while (scopes.length && !scope().el.isConnected) leave();
+        const sc = scope();
+        if (sc && sc.sub && !sc.sub.isConnected) setSub(controls(sc.el)[0] || null);
+        return scope();
+    }
+
+    /* ---------- layers: context menus, submenus, dialogs ---------- */
+
+    const LAYER_SEL = '[role="menu"], [role="dialog"], [aria-modal="true"], .GenericModal';
+    // the topmost open menu / dialog, if any (the last one in the DOM wins)
+    function topLayer() {
+        const open = [...document.querySelectorAll(LAYER_SEL)].filter((el) => el.id !== "tt-overlay" && shown(el) && controls(el).length);
+        let layer = open.filter((el) => !el.parentElement?.closest(LAYER_SEL)).pop() || null;
+        // descend into a submenu only after we opened it (<CR>/l on its item):
+        // Spotify also expands submenus on mere focus/hover
+        for (let sc; layer && (sc = scopes.find((x) => x.el === layer)) && sc.opened?.getAttribute("aria-expanded") === "true"; ) {
+            const inner = open.find((el) => el !== layer && layer.contains(el) && el.parentElement.closest(LAYER_SEL) === layer);
+            if (!inner) break;
+            layer = inner;
+        }
+        return layer;
+    }
+    // a layer that opens takes over as the current scope; one that closes gives it back
+    function syncLayers() {
+        for (let i = scopes.length - 1; i >= 0; i--) {
+            if (scopes[i].layer && !(scopes[i].el.isConnected && shown(scopes[i].el))) {
+                scopes.splice(i).forEach((sc) => {
+                    sc.sub?.removeAttribute("data-tt-sub");
+                    sc.el.removeAttribute("data-tt-scope");
+                });
+            }
+        }
+        const layer = topLayer();
+        if (layer && !scopes.some((sc) => sc.el === layer) && enter(layer)) {
+            scope().layer = true;
+            // menus/dialogs often autofocus a text box; stay in normal mode, i types into it
+            if (isEditable(document.activeElement) && layer.contains(document.activeElement)) document.activeElement.blur();
+        }
+    }
+    function closeLayer(el) {
+        const outer = el.parentElement?.closest(LAYER_SEL);
+        if (outer) {
+            // a submenu closes when the pointer moves to another item of its menu
+            const parent = scopes.find((sc) => sc.el === outer);
+            const sibling = controls(outer).find((b) => !b.hasAttribute("aria-expanded"));
+            if (parent) parent.opened = null;
+            sibling?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+            sibling?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+            setTimeout(() => {
+                syncLayers();
+                render();
+            }, 100);
+            return;
+        }
+        const init = { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true };
+        (el.contains(document.activeElement) ? document.activeElement : el).dispatchEvent(new KeyboardEvent("keydown", init));
+        setTimeout(() => {
+            if (el.isConnected && shown(el) && el.matches('[role="menu"]')) {
+                // context menus close on a mousedown outside them
+                document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+            }
+            syncLayers();
+            render();
+        }, 50);
+    }
+
+    // K: right-click the highlighted thing (vim's "tell me about the thing under the cursor")
+    function contextMenu() {
+        const target = validScope()?.sub || cursorEl();
+        if (!target) return;
+        const r = target.getBoundingClientRect();
+        const x = r.left + Math.min(r.width / 2, 40);
+        const y = r.top + r.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        const el = hit && target.contains(hit) ? hit : target;
+        el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 2, buttons: 2 }));
+        setTimeout(() => {
+            syncLayers();
+            render();
+        }, 150);
+    }
+
+    /* ---------- sliders: <CR> to grab, h/l to adjust, <Esc> to let go ---------- */
+
+    const isSlider = (el) => !!el && (el.matches('input[type="range"], [role="slider"]') || !!el.querySelector?.(':scope > input[type="range"]'));
+    const sliderInput = (el) => (el.matches('input[type="range"]') ? el : el.querySelector('input[type="range"]'));
+    function sliderName(el) {
+        const id = el.closest("[data-testid]")?.dataset.testid || "";
+        if (/progress/.test(id)) return "seek";
+        if (/volume/.test(id)) return "volume";
+        return labelOf(el) || "slider";
+    }
+    function enterAdjust(el) {
+        el.setAttribute("data-tt-scope", "");
+        el.setAttribute("data-tt-sub", "");
+        scopes.push({ el, sub: el, adjust: true });
+        render();
+    }
+    function adjust(el, n) {
+        const kind = sliderName(el);
+        const P = Player();
+        if (kind === "seek" && P?.seek) P.seek(Math.max(0, (P.getProgress?.() ?? 0) + n * 5000));
+        else if (kind === "volume" && P?.setVolume) P.setVolume(Math.max(0, Math.min(1, (P.getVolume?.() ?? 0) + n * 0.05)));
+        else {
+            const input = sliderInput(el);
+            if (!input) return;
+            const step = Number(input.step) || (Number(input.max) - Number(input.min)) / 20 || 1;
+            const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+            set.call(input, Math.max(Number(input.min), Math.min(Number(input.max), Number(input.value) + n * step)));
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        setTimeout(render, 100);
+    }
+    function sliderValue(el) {
+        const input = sliderInput(el);
+        if (!input) return "";
+        const kind = sliderName(el);
+        const P = Player();
+        // the range input lags behind the player by a render; ask the player
+        if (kind === "volume") return Math.round((P?.getVolume?.() ?? Number(input.value)) * 100) + "%";
+        if (kind === "seek") {
+            const sec = Math.round((P?.getProgress?.() ?? Number(input.value)) / 1000);
+            return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+        }
+        return input.value;
+    }
+
+    function pressControl(el) {
+        if (!el) return;
+        if (isEditable(el)) return el.focus();
+        const sc = scope();
+        if (sc?.layer) sc.opened = el; // lets topLayer() follow into its submenu
+        if (sc?.layer && el.hasAttribute("aria-expanded")) {
+            // Spotify submenus open on hover, not on click
+            el.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+            el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+            el.dispatchEvent(new MouseEvent("mouseenter"));
+        } else el.click();
+        // the click may have opened a submenu, closed a menu, re-rendered or navigated
+        setTimeout(() => {
+            syncLayers();
+            validScope();
+            render();
+        }, 150);
+    }
+
+    // the generic actions every level shares
+    const act = {
+        nav(dir, n) {
+            const sc = validScope();
+            if (sc?.adjust) return dir === "h" || dir === "l" ? adjust(sc.el, dir === "l" ? n : -n) : undefined;
+            if (!sc) {
+                const items = getItems(active);
+                if (items.generic && items.length) {
+                    let el = items.includes(cursorEl()) ? cursorEl() : firstControl(items);
+                    if (el === cursorEl()) for (let i = 0; i < n; i++) el = spatial(el, items, dir) || el;
+                    return setCursor(active, el, "off");
+                }
+                return dir === "j" ? move(n) : dir === "k" ? move(-n) : moveCol(dir === "l" ? n : -n);
+            }
+            const targets = controls(sc.el);
+            let el = sc.sub && targets.includes(sc.sub) ? sc.sub : targets[0];
+            // in menus, l at the right edge opens the submenu, h at the left edge closes it
+            if (sc.layer && !spatial(el, targets, dir)) {
+                if (dir === "l") return pressControl(el);
+                if (dir === "h" && scopes.filter((x) => x.layer).length > 1) return act.back();
+            }
+            for (let i = 0; i < n; i++) el = spatial(el, targets, dir) || el;
+            setSub(el);
+        },
+        edge(dir) {
+            const sc = validScope();
+            if (!sc) return gotoEdge(dir);
+            const targets = controls(sc.el);
+            if (!targets.length) return;
+            setSub(dir < 0 ? firstControl(targets) : lastControl(targets));
+        },
+        // <CR>: go inside if there is anything inside, otherwise press it
+        enter() {
+            const sc = validScope();
+            if (!sc && isSlider(cursorEl())) return enterAdjust(cursorEl());
+            if (sc && !sc.adjust && isSlider(sc.sub)) return enterAdjust(sc.sub);
+            if (sc?.adjust) return leave();
+            if (!sc) return enter(cursorEl()) || activate(cursorEl());
+            if (sc.sub && controls(sc.sub).length > 1) return enter(sc.sub);
+            pressControl(sc.sub);
+        },
+        // o: press the highlighted thing at whatever level we are
+        open() {
+            const sc = validScope();
+            if (!sc) return activate(cursorEl());
+            pressControl(sc.sub);
+        },
+        back() {
+            if (overlayKind) return closeOverlay();
+            syncLayers();
+            if (scope()?.layer) return closeLayer(scope().el);
+            leave();
+        },
+    };
+
+    /* ================================
        KEYMAPS
        ================================ */
 
@@ -909,12 +1274,12 @@
     };
 
     const MAPS = {
-        j: (c) => move(c),
-        k: (c) => move(-c),
-        h: (c) => moveCol(-c),
-        l: (c) => moveCol(c),
-        gg: (c, counted) => (counted ? gotoLine(c) : gotoEdge(-1)),
-        G: (c, counted) => (counted ? gotoLine(c) : gotoEdge(1)),
+        j: (c) => act.nav("j", c),
+        k: (c) => act.nav("k", c),
+        h: (c) => act.nav("h", c),
+        l: (c) => act.nav("l", c),
+        gg: (c, counted) => (counted && !scope() ? gotoLine(c) : act.edge(-1)),
+        G: (c, counted) => (counted && !scope() ? gotoLine(c) : act.edge(1)),
         "<C-d>": () => halfPage(1),
         "<C-u>": () => halfPage(-1),
         "<C-f>": () => fullPage(1),
@@ -933,14 +1298,20 @@
         L: () => cyclePane(1),
         "<C-w>h": () => cyclePane(-1),
         "<C-w>l": () => cyclePane(1),
+        "<C-w>j": () => {
+            if (active !== "player") lastPane = active;
+            setActive("player");
+        },
+        "<C-w>k": () => setActive(active === "player" ? lastPane : active),
         "<C-w>w": () => cyclePane(1),
         "<C-w><C-w>": () => cyclePane(1),
         "<C-o>": () => History()?.goBack(), // jumplist older
         "<C-i>": () => History()?.goForward(), // jumplist newer
-        "<CR>": () => activate(cursorEl()),
-        o: () => activate(cursorEl()),
-        i: () => focusSearch(),
-        a: () => focusSearch(),
+        "<CR>": () => act.enter(),
+        K: () => contextMenu(),
+        o: () => act.open(),
+        i: () => insert(),
+        a: () => insert(),
         "/": () => openCmdline("/"),
         n: () => searchNext(1),
         N: () => searchNext(-1),
@@ -965,8 +1336,9 @@
         "<C-k>": () => Player()?.next(),
         "<C-j>": () => Player()?.back(),
         Q: () => {},
-        "<Esc>": () => closeOverlay(),
-        "<C-c>": () => closeOverlay(),
+        "<Esc>": () => act.back(),
+        "<BS>": () => act.back(),
+        "<C-c>": () => act.back(),
     };
     const MAP_KEYS = Object.keys(MAPS);
 
@@ -1012,6 +1384,14 @@
     // does what clicking away does
     function leaveInsert(e) {
         const field = document.activeElement;
+        if (field.closest('[role="menu"]')) {
+            // inside a menu, Escape would close the whole menu: just leave the box
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            field.blur();
+            mode = "NORMAL";
+            return render();
+        }
         if (e.key !== "Escape") {
             e.preventDefault();
             e.stopImmediatePropagation();
@@ -1021,7 +1401,8 @@
         }
         setTimeout(() => {
             if (document.activeElement === field) field.blur();
-            for (const type of ["mousedown", "mouseup"]) document.body.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+            // (not inside a dialog: an outside click would close it and lose the edits)
+            if (!field.closest(LAYER_SEL)) for (const type of ["mousedown", "mouseup"]) document.body.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
             mode = "NORMAL";
             render();
         });
@@ -1217,11 +1598,12 @@
     );
     try {
         History()?.listen?.(() => {
+            if (active === "main") leaveAll();
             cursors.main = {};
             setTimeout(render, 300);
         });
     } catch {}
 
     setActive("main");
-    window.__textTerminalApi = { move, setActive, cursorEl, getItems, runCommand, CFG };
+    window.__textTerminalApi = { move, setActive, cursorEl, getItems, runCommand, CFG, controls, topLayer, get scopes() { return scopes; } };
 })();
