@@ -72,6 +72,19 @@ Requirements: Node 22+ (for the built-in `WebSocket`), macOS (`osascript` is
 used to save and restore playback). Set `SPOTIFY_DEBUG_PORT` to use a port
 other than 9222.
 
+## After a Spotify or Spicetify update
+
+Spotify updates itself, and each update replaces Spicetify's patch:
+
+```sh
+spicetify backup apply   # re-back-up the new Spotify, apply the theme; records the version in config-xpui.ini
+```
+
+Spotify 1.3.5 renamed most of its class names (`Root__*`, `main-*`). The theme now
+targets the stable element ids instead: `#global-nav-bar`, `#Desktop_LeftSidebar_Id`,
+`#main-view`, `#Desktop_PanelContainer_Id`, `[data-testid="now-playing-bar"]`. If a
+future update breaks the layout again, check those ids first.
+
 ## Notes
 
 - Leader key is a tap of **right ⌘**; Space stays Spotify's play/pause.

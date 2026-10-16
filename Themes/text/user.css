@@ -50,8 +50,8 @@
     --font-size-multiplier-header: 4;
 
     --display-card-image: block; /* none | block */
-    --display-coverart-image: none; /* none | block */
-    --display-header-image: none; /* none | block */
+    --display-coverart-image: block; /* none | block */ /* playbar: current track's art */
+    --display-header-image: block; /* none | block */ /* album / playlist header art */
     --display-sidebar-image: block; /* none | block */
     --display-tracklist-image: none; /* none | block */
     --display-spicetify-banner-ascii: block; /* none | block */
@@ -116,26 +116,26 @@
 }
 
 /* fix */
-.Root__globalNav {
+#global-nav-bar {
     padding: 8px 16px !important;
     height: unset;
 }
-.spotify__container--is-desktop.spotify__os--is-windows .Root__globalNav,
-.spotify__container--is-desktop.spotify__os--is-macos .Root__globalNav {
+.spotify__container--is-desktop.spotify__os--is-windows #global-nav-bar,
+.spotify__container--is-desktop.spotify__os--is-macos #global-nav-bar {
     margin: 0;
     margin-top: var(--global-nav-margin-top);
 }
-.spotify__container--is-desktop.spotify__os--is-linux .Root__globalNav {
+.spotify__container--is-desktop.spotify__os--is-linux #global-nav-bar {
     margin: 8px 0 0;
 }
-.Root__top-container {
+.Root {
     --panel-gap: 16px !important;
 }
-.Root__top-bar {
+#global-nav-bar {
     border: var(--border-width) solid transparent;
 }
-.Root__nav-bar,
-.main-nowPlayingBar-container {
+#Desktop_LeftSidebar_Id,
+[data-testid="now-playing-bar"] {
     overflow: visible;
 }
 .main-view-container {
@@ -269,8 +269,8 @@ div:has(> .main-entityHeader-container) {
     --background-elevated-highlight: var(--spice-button-active) !important;
     --background-elevated-press: var(--spice-button-active) !important;
 }
-.Root__top-container,
-.Root__nav-bar,
+.Root,
+#Desktop_LeftSidebar_Id,
 .main-yourLibraryX-libraryContainer,
 .main-globalNav-navLink,
 .main-topBar-searchBar {
@@ -369,43 +369,40 @@ img[src*="equaliser"] {
 }
 
 /* pane borders */
-.Root__globalNav,
-.main-yourLibraryX-entryPoints,
-.Root__main-view,
-.main-nowPlayingBar-container,
-.Root__right-sidebar:has(aside:not(:empty)) {
+#global-nav-bar,
+#Desktop_LeftSidebar_Id,
+#main-view,
+[data-testid="now-playing-bar"],
+#Desktop_PanelContainer_Id:not(:empty) {
     border: var(--border-width) var(--border-style);
     border-color: var(--spice-border-inactive);
     border-radius: var(--border-radius);
     background-color: var(--spice-main);
     transition: border-color var(--border-transition);
 }
-.Root__globalNav:hover,
-.main-yourLibraryX-entryPoints:hover,
-.Root__main-view:hover,
-.main-nowPlayingBar-container:hover,
-.Root__right-sidebar:has(aside:not(:empty)):hover {
+#global-nav-bar:hover,
+#Desktop_LeftSidebar_Id:hover,
+#main-view:hover,
+[data-testid="now-playing-bar"]:hover,
+#Desktop_PanelContainer_Id:not(:empty):hover {
     border: var(--border-width) var(--border-style);
     border-color: var(--spice-border-active);
 }
 
 /* pane headers */
-.Root__nav-bar .main-yourLibraryX-entryPoints {
+#Desktop_LeftSidebar_Id {
     overflow-x: visible !important;
 }
-.Root__globalNav::before,
+#global-nav-bar::before,
 .main-globalNav-searchContainer
     form
     div:has(> .main-topBar-searchBar:focus)::before,
-.Root__nav-bar
-    .main-yourLibraryX-entryPoints:has(.main-yourLibraryX-navItems)::before,
-.Root__nav-bar
-    .main-yourLibraryX-entryPoints:has(
-        .main-yourLibraryX-libraryContainer
-    )::before,
-.Root__main-view::before,
-.main-nowPlayingBar-container::before,
-.Root__right-sidebar:has(aside:not(:empty))::before {
+#Desktop_LeftSidebar_Id
+    #Desktop_LeftSidebar_Id:has(.main-yourLibraryX-navItems)::before,
+#Desktop_LeftSidebar_Id::before,
+#main-view::before,
+[data-testid="now-playing-bar"]::before,
+#Desktop_PanelContainer_Id:not(:empty)::before {
     color: var(--spice-header);
     position: absolute;
     margin: -10px 4px;
@@ -414,7 +411,7 @@ img[src*="equaliser"] {
     z-index: 3;
     transition: color var(--border-transition);
 }
-.Root__globalNav::before {
+#global-nav-bar::before {
     content: "Nav";
     top: 0;
     left: 0;
@@ -425,32 +422,36 @@ img[src*="equaliser"] {
     content: "Search";
     color: var(--spice-border-active) !important;
 }
-.Root__nav-bar
-    .main-yourLibraryX-entryPoints:has(.main-yourLibraryX-navItems)::before {
-    content: "Pages";
-}
-.Root__nav-bar
-    .main-yourLibraryX-entryPoints:has(
-        .main-yourLibraryX-libraryContainer
-    )::before {
+#Desktop_LeftSidebar_Id::before {
     content: "Library";
 }
-.Root__main-view::before {
+#main-view::before {
     content: "Main";
     position: fixed;
 }
-.main-nowPlayingBar-container::before {
+[data-testid="now-playing-bar"]::before {
     content: "Playing";
 }
-.Root__right-sidebar:has(aside:not(:empty))::before {
+#Desktop_PanelContainer_Id:not(:empty)::before {
     content: "Sidebar";
 }
-.Root__globalNav:hover::before,
-.Root__nav-bar .main-yourLibraryX-entryPoints:hover::before,
-.Root__main-view:hover::before,
-.main-nowPlayingBar-container:hover::before,
-.Root__right-sidebar:has(aside:not(:empty)):hover::before {
+#global-nav-bar:hover::before,
+#Desktop_LeftSidebar_Id:hover::before,
+#main-view:hover::before,
+[data-testid="now-playing-bar"]:hover::before,
+#Desktop_PanelContainer_Id:not(:empty):hover::before {
     color: var(--spice-border-active);
+}
+
+/* the Sidebar label is a pseudo-element that Spotify 1.3.5 stretches over the
+   whole panel (inset: 0); with its background it hid the sidebar's content */
+#Desktop_PanelContainer_Id:not(:empty)::before,
+[data-testid="now-playing-bar"]::before {
+    inset: auto;
+    top: -10px;
+    left: 4px;
+    width: max-content;
+    height: auto;
 }
 
 /* scrollbars */
@@ -541,12 +542,12 @@ select:focus {
 .main-globalNav-historyButtonsContainer
     > div:not([class*="custom"])
     > div:nth-child(1),
-.Root__globalNav > div:nth-child(3) > div:nth-child(2),
+#global-nav-bar > div:nth-child(3) > div:nth-child(2),
 .main-topBar-topbarContentRight + div {
     height: 0;
     width: 0;
 }
-.Root__globalNav > div:nth-child(3) {
+#global-nav-bar > div:nth-child(3) {
     -webkit-margin-end: 0;
     margin-inline-end: 0;
 }
@@ -591,11 +592,11 @@ select:focus {
     border: 1px solid;
     border-color: var(--spice-border-inactive);
 }
-.Root__globalNav:hover:has(.main-topBar-searchBar:focus) {
+#global-nav-bar:hover:has(.main-topBar-searchBar:focus) {
     border: var(--border-width) var(--border-style);
     border-color: var(--spice-border-inactive);
 }
-.Root__globalNav:hover:has(.main-topBar-searchBar:focus)::before {
+#global-nav-bar:hover:has(.main-topBar-searchBar:focus)::before {
     color: var(--spice-header);
 }
 .main-globalNav-searchContainer form .main-topBar-searchBar:focus {
@@ -657,7 +658,7 @@ form .main-topBar-searchBar:placeholder-shown {
 }
 
 /* sidebar config */
-.main-yourLibraryX-entryPoints:first-child:has(
+#Desktop_LeftSidebar_Id:first-child:has(
         .main-yourLibraryX-navItems:empty
     ) {
     display: none;
@@ -781,7 +782,7 @@ form .main-topBar-searchBar:placeholder-shown {
 }
 
 /* lyrics cinema */
-.Root__lyrics-cinema {
+#lyrics-cinema {
     border: var(--border-width) var(--border-style) transparent;
     overflow: hidden;
 }
@@ -829,13 +830,13 @@ form .main-topBar-searchBar:placeholder-shown {
 }
 
 /* playback seek bar */
-.main-nowPlayingBar-container .playback-bar {
+[data-testid="now-playing-bar"] .playback-bar {
     display: flex !important;
     flex-direction: row !important;
     align-items: center !important;
     justify-content: center !important;
 }
-.main-nowPlayingBar-container .playback-bar > div:has(> [data-testid="playback-progressbar"]) {
+[data-testid="now-playing-bar"] .playback-bar > div:has(> [data-testid="playback-progressbar"]) {
     position: absolute !important;
     width: 100% !important;
     height: 16px !important;
@@ -843,12 +844,12 @@ form .main-topBar-searchBar:placeholder-shown {
     top: 50% !important;
     transform: translateY(-50%) !important;
 }
-.main-nowPlayingBar-container .playback-bar [data-testid="progress-bar"] {
+[data-testid="now-playing-bar"] .playback-bar [data-testid="progress-bar"] {
     --progress-bar-height: 16px !important;
     --progress-bar-radius: calc(var(--border-radius) / 2) !important;
 }
-.main-nowPlayingBar-container .playback-bar .progress-bar__slider,
-.main-nowPlayingBar-container .playback-bar [data-testid="progress-bar-handle"] {
+[data-testid="now-playing-bar"] .playback-bar .progress-bar__slider,
+[data-testid="now-playing-bar"] .playback-bar [data-testid="progress-bar-handle"] {
     box-shadow: none !important;
     height: 100% !important;
     border-radius: 0 !important;
@@ -875,22 +876,22 @@ form .main-topBar-searchBar:placeholder-shown {
 }
 
 /* volume bar */
-.main-nowPlayingBar-container .main-nowPlayingBar-right [data-testid="progress-bar"] {
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right [data-testid="progress-bar"] {
     --progress-bar-height: calc(var(--font-size) / 6) !important;
 }
-.main-nowPlayingBar-container .main-nowPlayingBar-right .progress-bar__slider,
-.main-nowPlayingBar-container .main-nowPlayingBar-right [data-testid="progress-bar-handle"] {
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right .progress-bar__slider,
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right [data-testid="progress-bar-handle"] {
     height: 16px !important;
     box-shadow: none !important;
     border-radius: 0 !important;
     background-color: var(--spice-text) !important;
 }
-.main-nowPlayingBar-container .main-nowPlayingBar-right .x-progressBar-progressBarBg,
-.main-nowPlayingBar-container .main-nowPlayingBar-right [data-testid="progress-bar-background"] {
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right .x-progressBar-progressBarBg,
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right [data-testid="progress-bar-background"] {
     background-color: transparent !important;
     border-bottom: var(--progress-bar-height) dashed rgba(var(--spice-rgb-subtext), 0.3) !important;
 }
-.main-nowPlayingBar-container .main-nowPlayingBar-right .x-progressBar-fillColor {
+[data-testid="now-playing-bar"] .main-nowPlayingBar-right .x-progressBar-fillColor {
     background-color: var(--spice-main) !important;
     border-bottom: var(--progress-bar-height) dashed var(--fg-color) !important;
 }
@@ -1063,18 +1064,18 @@ html {
 }
 
 /* focused pane = vim's current window */
-.Root__globalNav[data-tt-active],
-.Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints,
-.Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container,
-.Root__main-view[data-tt-active],
-.Root__right-sidebar[data-tt-active]:has(aside:not(:empty)) {
+#global-nav-bar[data-tt-active],
+#Desktop_LeftSidebar_Id[data-tt-active],
+[data-testid="now-playing-bar"][data-tt-active] [data-testid="now-playing-bar"],
+#main-view[data-tt-active],
+#Desktop_PanelContainer_Id[data-tt-active]:has(aside:not(:empty)) {
     border-color: var(--spice-border-active);
 }
-.Root__globalNav[data-tt-active]::before,
-.Root__nav-bar[data-tt-active] .main-yourLibraryX-entryPoints::before,
-.Root__now-playing-bar[data-tt-active] .main-nowPlayingBar-container::before,
-.Root__main-view[data-tt-active]::before,
-.Root__right-sidebar[data-tt-active]:has(aside:not(:empty))::before {
+#global-nav-bar[data-tt-active]::before,
+#Desktop_LeftSidebar_Id[data-tt-active]::before,
+[data-testid="now-playing-bar"][data-tt-active] [data-testid="now-playing-bar"]::before,
+#main-view[data-tt-active]::before,
+#Desktop_PanelContainer_Id[data-tt-active]:has(aside:not(:empty))::before {
     color: var(--spice-border-active);
 }
 
@@ -1086,7 +1087,7 @@ html {
     transition: none !important; /* terminal cursors jump, they don't fade */
     border-radius: var(--border-radius) !important;
 }
-:is(.Root__globalNav, .Root__nav-bar, .Root__main-view, .Root__right-sidebar, .Root__now-playing-bar):not([data-tt-active]) [data-tt-cursor] {
+:is(#global-nav-bar, #Desktop_LeftSidebar_Id, #main-view, #Desktop_PanelContainer_Id, [data-testid="now-playing-bar"]):not([data-tt-active]) [data-tt-cursor] {
     outline-color: var(--spice-border-inactive) !important;
 }
 [data-tt-cursor] .main-trackList-trackListRow,
@@ -1096,14 +1097,14 @@ html {
 
 /* friend activity / sidebar rows get the same inner padding as track rows,
    so the cursor outline doesn't hug the text */
-.Root__right-sidebar ul:has(> li) {
+#Desktop_PanelContainer_Id ul:has(> li) {
     gap: 8px !important;
 }
-.Root__right-sidebar ul > li {
+#Desktop_PanelContainer_Id ul > li {
     padding: 8px 12px;
     transition: none !important;
 }
-.Root__right-sidebar ul > li[data-tt-cursor] {
+#Desktop_PanelContainer_Id ul > li[data-tt-cursor] {
     outline-offset: 0 !important; /* row children would paint over an inset outline */
 }
 
@@ -1117,8 +1118,8 @@ html {
 /* reverse video, like a terminal selection; outlines get clipped by
    ellipsis cells, a background doesn't */
 [data-tt-sub],
-.Root__globalNav[data-tt-active] [data-tt-cursor],
-.Root__now-playing-bar[data-tt-active] [data-tt-cursor] {
+#global-nav-bar[data-tt-active] [data-tt-cursor],
+[data-testid="now-playing-bar"][data-tt-active] [data-tt-cursor] {
     background-color: var(--spice-border-active) !important;
     color: var(--spice-main) !important;
     opacity: 1 !important;
@@ -1128,15 +1129,15 @@ html {
 }
 [data-tt-sub] *,
 [data-tt-sub] svg,
-.Root__globalNav[data-tt-active] [data-tt-cursor] *,
-.Root__now-playing-bar[data-tt-active] [data-tt-cursor] * {
+#global-nav-bar[data-tt-active] [data-tt-cursor] *,
+[data-testid="now-playing-bar"][data-tt-active] [data-tt-cursor] * {
     color: var(--spice-main) !important;
     fill: var(--spice-main) !important;
     opacity: 1 !important;
 }
 
 /* a focused player pane counts as hovered: show the faded control groups */
-.Root__now-playing-bar[data-tt-active] :is(.player-controls__buttons, .main-nowPlayingBar-extraControls) {
+[data-testid="now-playing-bar"][data-tt-active] :is(.player-controls__buttons, .main-nowPlayingBar-extraControls) {
     opacity: 1;
 }
 /* range inputs are invisible (the theme draws the bar), so theme.js frames

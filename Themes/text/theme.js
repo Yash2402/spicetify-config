@@ -17,7 +17,7 @@
 (function textTerminal() {
     "use strict";
 
-    if (!document.querySelector(".Root__main-view") || !document.body) {
+    if (!document.querySelector("#main-view") || !document.body) {
         setTimeout(textTerminal, 300);
         return;
     }
@@ -65,11 +65,11 @@
        ================================ */
 
     const PANES = [
-        { name: "nav", sel: ".Root__globalNav", extra: "" }, // top bar: <C-w>k
-        { name: "library", sel: ".Root__nav-bar", extra: "" },
-        { name: "main", sel: ".Root__main-view", extra: "" },
-        { name: "sidebar", sel: ".Root__right-sidebar", extra: ",li" }, // friend activity / queue
-        { name: "player", sel: ".Root__now-playing-bar", extra: "" }, // controls + sliders, moved spatially
+        { name: "nav", sel: "#global-nav-bar", extra: "" }, // top bar: <C-w>k
+        { name: "library", sel: "#Desktop_LeftSidebar_Id", extra: "" },
+        { name: "main", sel: "#main-view", extra: "" },
+        { name: "sidebar", sel: "#Desktop_PanelContainer_Id", extra: ",li" }, // friend activity / queue
+        { name: "player", sel: '[data-testid="now-playing-bar"]', extra: "" }, // controls + sliders, moved spatially
     ];
     const ITEM_SEL = [
         '[role="row"][aria-rowindex]',
@@ -126,24 +126,30 @@
             if (el.matches('[role="row"]') && el.querySelector(ITEM_SEL)) continue; // row wrapping cards
             out.push(el);
         }
-        if (out.length) return out;
+        if (out.length) {
+            // a page can hold a second tracklist after the first one (a playlist's
+            // "Recommended based on..." grid): keep the first grid's rows only
+            const grid = out[0].closest('[role="grid"]');
+            return grid ? out.filter((el) => el.closest('[role="grid"]') === grid) : out;
+        }
         // panes with none of the above (player bar, settings, other custom apps):
         // every control becomes an item and hjkl move spatially between them
-        const generic = controls(p).filter((el) => !el.closest(".main-topBar-container"));
+        const generic = controls(p);
         generic.generic = true;
         return generic;
     }
 
     // area hidden behind sticky headers / the floating top bar
     function topInset(sc) {
+        // sticky bars (the tracklist column header, the page's top bar) pin to the
+        // top of the scroller and hide whatever scrolls underneath them
+        const top = sc.getBoundingClientRect().top;
         let inset = 0;
-        for (const h of sc.querySelectorAll(".main-trackList-trackListHeader")) {
-            const cs = getComputedStyle(h);
-            if (cs.position === "sticky") inset = Math.max(inset, (parseFloat(cs.top) || 0) + h.offsetHeight);
+        for (const h of sc.querySelectorAll("*")) {
+            if (h.offsetHeight === 0 || getComputedStyle(h).position !== "sticky") continue;
+            const r = h.getBoundingClientRect();
+            if (r.top <= top + 4) inset = Math.max(inset, r.bottom - top);
         }
-        const pane = sc.closest(".Root__main-view");
-        const bar = pane?.querySelector(".main-topBar-container");
-        if (bar) inset = Math.max(inset, bar.offsetHeight);
         return Math.min(inset, sc.clientHeight / 3);
     }
     function view(sc) {
@@ -398,9 +404,9 @@
 
     function activate(el) {
         if (!el) return;
-        const track = el.querySelector(".main-trackList-trackListRow");
-        if (track) {
-            track.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+        // track rows in the main pane play on double-click (the row's own handler)
+        if (el.matches('[role="row"][aria-rowindex]') && paneOf(el) === "main") {
+            el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
             return;
         }
         // encore rows/cards put their click handler on an "<block>__on-click" overlay
@@ -720,7 +726,7 @@
     }
 
     function focusSearch() {
-        const input = document.querySelector('.Root__globalNav input[type="search"], .Root__globalNav input, [data-testid="search-input"]');
+        const input = document.querySelector('#global-nav-bar input[type="search"], #global-nav-bar input, [data-testid="search-input"]');
         if (input) {
             input.focus();
             input.select?.();
@@ -821,7 +827,7 @@
     };
     function currentPage() {
         const path = History()?.location?.pathname || location.pathname;
-        const h = document.querySelector(".Root__main-view .main-entityHeader-title h1, .Root__main-view h1");
+        const h = document.querySelector("#main-view h1");
         return { path, title: (h?.textContent || document.title || path).trim().slice(0, 60) };
     }
     function harpoonAdd() {
@@ -1244,7 +1250,7 @@
             if (overlayKind) return closeOverlay();
             syncLayers();
             if (validScope()) return act.back();
-            const folderBack = active === "library" && document.querySelector('.Root__nav-bar button[aria-label="Go back"]');
+            const folderBack = active === "library" && document.querySelector('#Desktop_LeftSidebar_Id button[aria-label="Go back"]');
             if (folderBack && shown(folderBack)) {
                 folderBack.click();
                 cursors.library = {};
@@ -1292,7 +1298,7 @@
             return uri && !isNaN(index) ? { index, uri, context: "" } : null;
         }
         // track rows: the row component's props sit a few fibers above the inner row
-        const el = row.querySelector?.(".main-trackList-trackListRow") || row;
+        const el = row;
         const key = Object.keys(el).find((k) => k.startsWith("__reactFiber"));
         for (let f = key && el[key], d = 0; f && d < 5; f = f.return, d++) {
             const p = f.memoizedProps;
@@ -1331,7 +1337,7 @@
         return d.index;
     }
     function cacheRows() {
-        for (const row of document.querySelectorAll('.Root__main-view [role="row"]')) {
+        for (const row of document.querySelectorAll('#main-view [role="row"]')) {
             const pos = rowPos(row);
             if (pos != null) visual.cache.set(pos, rowData(row).uri);
         }
@@ -1368,7 +1374,7 @@
         if (!visual) return;
         cacheRows();
         const [lo, hi] = visualRange();
-        for (const row of document.querySelectorAll('.Root__main-view [role="row"]')) {
+        for (const row of document.querySelectorAll('#main-view [role="row"]')) {
             const pos = rowPos(row);
             if (pos != null && pos >= lo && pos <= hi) row.setAttribute("data-tt-visual", "");
         }
@@ -1568,7 +1574,7 @@
     async function writeTracks(arg, ranged) {
         const append = arg.startsWith(">>");
         const name = arg.replace(/^>>\s*/, "").trim();
-        const listName = (document.querySelector(".Root__main-view .main-entityHeader-title h1, .Root__main-view h1")?.textContent || "selection").trim();
+        const listName = (document.querySelector("#main-view h1")?.textContent || "selection").trim();
         try {
             const uris = ranged && visual ? await rangeUris(...visualRange()) : await rangeUris();
             if (!uris.length) return message("E32: No tracks to write", true);
@@ -1657,9 +1663,9 @@
     // buttons outside the panes' lists: friends, What's New, queue... (the
     // panel they open becomes the focused pane)
     const UI = {
-        friends: { sel: '.Root__globalNav button[aria-label="Listening activity"]', pane: "sidebar" },
-        news: { sel: `.Root__globalNav button[aria-label="What's New"]`, pane: "main" },
-        browse: { sel: '.Root__globalNav button[aria-label="Browse"]', pane: "main" },
+        friends: { sel: '#global-nav-bar button[aria-label="Listening activity"]', pane: "sidebar" },
+        news: { sel: `#global-nav-bar button[aria-label="What's New"]`, pane: "main" },
+        browse: { sel: '#global-nav-bar button[aria-label="Browse"]', pane: "main" },
         profile: { sel: '[data-testid="user-widget-link"]' },
         queue: { sel: '[data-testid="control-button-queue"]', pane: "sidebar" },
         lyrics: { sel: '[data-testid="lyrics-button"]', pane: "main" },
@@ -1681,7 +1687,7 @@
         apps = (apps || []).filter(Boolean);
         if (apps[n - 1]) return History()?.push("/" + apps[n - 1]);
         // fallback: the app buttons between "Go forward" and "Home" in the nav bar
-        const btns = [...document.querySelectorAll(".Root__globalNav button")].filter((b) => b.offsetWidth);
+        const btns = [...document.querySelectorAll("#global-nav-bar button")].filter((b) => b.offsetWidth);
         const labels = btns.map((b) => b.getAttribute("aria-label") || "");
         const from = labels.indexOf("Go forward") + 1;
         const to = labels.indexOf("Home");
