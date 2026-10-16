@@ -1021,9 +1021,14 @@ button[data-testid="control-button-npv-episodes"] > span::after {
     font-size: 10px;
 }
 
+/* the transport buttons draw their own glyph (see above); hide Spotify's svg
+   so the icon is not doubled. Play/pause keeps its svg: it has no glyph */
+[data-testid="general-controls"] button svg,
+button[data-testid="control-button-skip-back"] svg,
+button[data-testid="control-button-skip-forward"] svg,
+button[data-testid="control-button-repeat"] svg,
 .main-shuffleButton-button > svg,
 .main-skipBackButton-button > svg,
-.main-playPauseButton-button > svg,
 .main-skipForwardButton-button > svg,
 .main-repeatButton-button > svg,
 :is(.player-controls__buttons, .npv-nowPlayingBar-controls) svg,
