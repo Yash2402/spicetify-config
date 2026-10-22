@@ -681,7 +681,8 @@
         "h|help": () => toggleHelp(true),
         "noh|nohlsearch": () => (lastSearch = ""),
         "harpoon": () => harpoonMenu(),
-        "friends|news|browse|queue|lyrics|profile": (arg, ranged, name) => openUi(name),
+        "friends|news|browse|queue|lyrics": (arg, ranged, name) => openUi(name),
+        "profile": () => profileRoute(),
         "w|write": (arg, ranged) => writeTracks(arg, ranged),
         "u|undo": () => undo(),
     };
@@ -1774,7 +1775,7 @@
         [L + "n"]: () => openUi("news"),
         [L + "b"]: () => openUi("browse"),
         [L + "q"]: () => openUi("queue"),
-        [L + "u"]: () => openUi("profile"),
+        [L + "u"]: () => profileRoute(),
         [L + "["]: () => History()?.goBack(),
         [L + "]"]: () => History()?.goForward(),
         [L + "y"]: yank(false),
@@ -2052,6 +2053,23 @@
             const items = getItems(pane);
             const hit = items.includes(item) ? item : items.find((it) => it.contains(e.target));
             if (hit) setCursor(pane, hit, "off", false);
+        },
+        true
+    );
+    // the profile icon (top right): Spotify's menu renders empty with some
+    // Spicetify settings on Spotify 1.3.6, so open the profile page directly
+    const profileRoute = () => {
+        const id = S().Platform?.username || (S().Platform?.initialUser?.uri || "").split(":").pop();
+        if (!id) return message("E: couldn't find your user id", true);
+        History()?.push("/user/" + id);
+    };
+    document.addEventListener(
+        "click",
+        (e) => {
+            if (!alive() || !e.target.closest?.('[data-testid="user-widget-link"]')) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            profileRoute();
         },
         true
     );

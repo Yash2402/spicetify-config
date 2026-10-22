@@ -86,6 +86,11 @@ targets the stable element ids instead: `#global-nav-bar`, `#Desktop_LeftSidebar
 future update breaks the layout again, check those ids first.
 
 ## Notes
+- The profile icon opens your profile page directly ( does too). On
+  Spotify 1.3.6, Spotify's own profile menu renders empty when Spicetify's
+  experimental features or home config are on, so the icon skips the menu.
+  Settings and Log out are not reachable from that icon.
+
 
 - Leader key is a tap of **right ⌘**; Space stays Spotify's play/pause.
 - Stats is built from [Mossbraker/spicetify-apps](https://github.com/Mossbraker/spicetify-apps)
