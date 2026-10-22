@@ -87,10 +87,11 @@ future update breaks the layout again, check those ids first.
 
 ## Notes
 
-- The profile icon opens your profile page directly (`<leader>u` does too). On
-  Spotify 1.3.6, Spotify's own profile menu renders empty when Spicetify's
-  experimental features or home config are on, so the icon skips the menu.
-  Settings and Log out are not reachable from that icon.
+- The theme runs as a Spicetify extension (`Extensions/text-theme.js`, a link to
+  `Themes/text/theme.js`) and `extensions = text-theme.js` in `config-xpui.ini`.
+- Spotify 1.3.6 renders its profile menu empty while Spicetify's **experimental
+  features** or **home config** are on ("cannot be rendered outside a collection"),
+  so both are off here. Turn them on only if you accept a broken profile menu.
 - Leader key is a tap of **right ⌘**; Space stays Spotify's play/pause.
 - Stats is built from [Mossbraker/spicetify-apps](https://github.com/Mossbraker/spicetify-apps)
   (open PR harbassan/spicetify-apps#246), because the official stats-v1.1.3
